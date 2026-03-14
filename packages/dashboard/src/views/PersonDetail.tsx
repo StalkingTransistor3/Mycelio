@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { usePerson, useInteractions } from '../hooks/usePeople.js';
+import AddInteractionForm from '../components/AddInteractionForm.js';
+import { Button } from '../components/FormField.js';
 import type { Interaction } from '@mycelio/shared';
 
 const tierLabels: Record<number, string> = {
@@ -22,6 +25,7 @@ export default function PersonDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: person, isLoading } = usePerson(id!);
   const { data: interactions } = useInteractions(id);
+  const [showLogInteraction, setShowLogInteraction] = useState(false);
 
   if (isLoading) return <p className="text-white/30 animate-pulse">Loading...</p>;
   if (!person) return <p className="text-red-400">Person not found</p>;
@@ -79,7 +83,10 @@ export default function PersonDetail() {
         </div>
       </div>
 
-      <h3 className="text-sm font-medium text-white/30 uppercase tracking-wider mb-3">Interaction History</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium text-white/30 uppercase tracking-wider">Interaction History</h3>
+        <Button onClick={() => setShowLogInteraction(true)}>+ Log Interaction</Button>
+      </div>
       <div className="space-y-2">
         {(interactions as Interaction[] | undefined)?.map((interaction) => (
           <div key={interaction.id} className="glass rounded-lg p-4 hover:bg-white/[0.07] transition-colors">
@@ -96,9 +103,16 @@ export default function PersonDetail() {
           </div>
         ))}
         {(!interactions || (interactions as unknown[]).length === 0) && (
-          <p className="text-white/20 text-sm py-4">No interactions recorded yet.</p>
+          <p className="text-white/20 text-sm py-4">No interactions recorded yet. Click "+ Log Interaction" to add one.</p>
         )}
       </div>
+
+      <AddInteractionForm
+        open={showLogInteraction}
+        onClose={() => setShowLogInteraction(false)}
+        personId={person.id}
+        personName={person.name}
+      />
     </div>
   );
 }

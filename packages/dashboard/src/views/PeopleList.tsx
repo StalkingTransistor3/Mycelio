@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePeople } from '../hooks/usePeople.js';
 import SearchBar from '../components/SearchBar.js';
+import AddPersonForm from '../components/AddPersonForm.js';
+import { Button } from '../components/FormField.js';
 
 const tierLabels: Record<number, string> = {
   1: 'Inner Circle',
@@ -21,12 +23,14 @@ const tierGlow: Record<number, string> = {
 
 export default function PeopleList() {
   const [search, setSearch] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
   const { data: people, isLoading, error } = usePeople(search ? { q: search } : undefined);
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold tracking-wide neon-text">People</h2>
+        <Button onClick={() => setShowAdd(true)}>+ Add Person</Button>
       </div>
 
       <div className="mb-6 max-w-md">
@@ -81,13 +85,15 @@ export default function PeopleList() {
             {people?.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-6 py-12 text-center text-white/20">
-                  No people found. Add someone via the API or Claude Code.
+                  No people found. Click "+ Add Person" to get started.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      <AddPersonForm open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   );
 }

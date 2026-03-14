@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout.js';
+import Overview from './views/Overview.js';
 import PeopleList from './views/PeopleList.js';
 import PersonDetail from './views/PersonDetail.js';
 import EventList from './views/EventList.js';
@@ -11,7 +12,8 @@ export default function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<PeopleList />} />
+        <Route path="/" element={<Overview />} />
+        <Route path="/people" element={<PeopleList />} />
         <Route path="/people/:id" element={<PersonDetail />} />
         <Route path="/events" element={<EventList />} />
         <Route path="/communities" element={<CommunityDashboard />} />

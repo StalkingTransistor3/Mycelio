@@ -1,8 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
 const navItems = [
-  { to: '/', label: 'People', icon: '⬡' },
-  { to: '/events', label: 'Events', icon: '◈' },
+  { to: '/', label: 'Overview', icon: '◈' },
+  { to: '/people', label: 'People', icon: '⬡' },
+  { to: '/events', label: 'Events', icon: '◆' },
   { to: '/communities', label: 'Communities', icon: '⬢' },
   { to: '/follow-ups', label: 'Follow-ups', icon: '◉' },
   { to: '/graph', label: 'Network', icon: '◇' },
@@ -32,6 +33,7 @@ export default function Layout() {
             <li key={item.to}>
               <NavLink
                 to={item.to}
+                end={item.to === '/'}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-5 py-2.5 text-sm transition-all duration-200 ${
                     isActive

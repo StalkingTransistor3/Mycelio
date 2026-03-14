@@ -1,11 +1,18 @@
+import { useState } from 'react';
 import { useEvents } from '../hooks/useEvents.js';
+import AddEventForm from '../components/AddEventForm.js';
+import { Button } from '../components/FormField.js';
 
 export default function EventList() {
   const { data: events, isLoading, error } = useEvents();
+  const [showAdd, setShowAdd] = useState(false);
 
   return (
     <div>
-      <h2 className="text-2xl font-bold tracking-wide neon-text mb-6">Events</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold tracking-wide neon-text">Events</h2>
+        <Button onClick={() => setShowAdd(true)}>+ Add Event</Button>
+      </div>
 
       {isLoading && <p className="text-white/30 animate-pulse">Loading...</p>}
       {error && <p className="text-red-400">Error: {(error as Error).message}</p>}
@@ -23,7 +30,7 @@ export default function EventList() {
               })}
             </p>
             {event.location && (
-              <p className="text-xs text-white/20 mt-1">◇ {event.location}</p>
+              <p className="text-xs text-white/20 mt-1">{event.location}</p>
             )}
             {event.description && (
               <p className="text-sm text-white/40 mt-3">{event.description}</p>
@@ -45,10 +52,12 @@ export default function EventList() {
         ))}
         {events?.length === 0 && (
           <p className="text-white/20 col-span-full text-center py-12">
-            No events yet. Create one via the API or Claude Code.
+            No events yet. Click "+ Add Event" to create one.
           </p>
         )}
       </div>
+
+      <AddEventForm open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   );
 }

@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { useCommunities, useCommunityHealth } from '../hooks/useCommunities.js';
+import AddCommunityForm from '../components/AddCommunityForm.js';
+import { Button } from '../components/FormField.js';
 import type { Community } from '@mycelio/shared';
 
 function CommunityCard({ community }: { community: Community }) {
@@ -51,10 +54,14 @@ function Stat({ label, value, warn }: { label: string; value: number; warn?: boo
 
 export default function CommunityDashboard() {
   const { data: communities, isLoading, error } = useCommunities();
+  const [showAdd, setShowAdd] = useState(false);
 
   return (
     <div>
-      <h2 className="text-2xl font-bold tracking-wide neon-text mb-6">Communities</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold tracking-wide neon-text">Communities</h2>
+        <Button onClick={() => setShowAdd(true)}>+ Add Community</Button>
+      </div>
 
       {isLoading && <p className="text-white/30 animate-pulse">Loading...</p>}
       {error && <p className="text-red-400">Error: {(error as Error).message}</p>}
@@ -65,10 +72,12 @@ export default function CommunityDashboard() {
         ))}
         {communities?.length === 0 && (
           <p className="text-white/20 col-span-full text-center py-12">
-            No communities yet. Create one via the API or Claude Code.
+            No communities yet. Click "+ Add Community" to create one.
           </p>
         )}
       </div>
+
+      <AddCommunityForm open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   );
 }
