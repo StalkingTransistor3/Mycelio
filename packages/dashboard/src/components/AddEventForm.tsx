@@ -12,14 +12,14 @@ interface Props {
 export default function AddEventForm({ open, onClose }: Props) {
   const qc = useQueryClient();
   const [form, setForm] = useState({
-    name: '', date: '', location: '', description: '', tags: '',
+    name: '', date: '', location: '', description: '', url: '', tags: '',
   });
 
   const mutation = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.createEvent(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['events'] });
-      setForm({ name: '', date: '', location: '', description: '', tags: '' });
+      setForm({ name: '', date: '', location: '', description: '', url: '', tags: '' });
       onClose();
     },
   });
@@ -31,6 +31,7 @@ export default function AddEventForm({ open, onClose }: Props) {
       date: new Date(form.date).toISOString(),
       location: form.location || undefined,
       description: form.description || undefined,
+      url: form.url || undefined,
       tags: form.tags ? form.tags.split(',').map((t: string) => t.trim()) : [],
     });
   };
@@ -51,6 +52,9 @@ export default function AddEventForm({ open, onClose }: Props) {
         </div>
         <FormField label="Description">
           <Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What's the event about?" />
+        </FormField>
+        <FormField label="URL (event page link)">
+          <Input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://meetup.com/..." />
         </FormField>
         <FormField label="Tags (comma-separated)">
           <Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="networking, tech, startup" />

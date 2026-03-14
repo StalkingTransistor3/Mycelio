@@ -39,6 +39,18 @@ Use these tools to manage the relationship network:
 - Connection strengths: strong, medium, weak
 - Tags are freeform string arrays
 
+## Data Quality Standards
+
+When adding or updating data, always follow these standards:
+
+- **Events** MUST have: `url` (link to event page, Meetup, Eventbrite, Luma, conference site), `description`, `location`, `date`, and `tags`
+- **Organizations** MUST have: `domain` (website URL)
+- **People** SHOULD have: `notes` with context about the relationship
+- **Tags**: lowercase, hyphenated, consistent with existing tags in the system
+- **Organizations with special roles**: Tag with `sponsor` (evidence of sponsoring past events) or `host` (evidence of contributing venue to past events) where applicable
+- When adding new data, always research and verify before inserting — search the web for official URLs, correct dates, and accurate descriptions
+- Prefer official/primary sources for URLs (e.g., the event's own website over a third-party listing)
+
 ## Development
 
 ```bash

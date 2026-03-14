@@ -41,6 +41,7 @@ export const api = {
   getEvents: () => request<{ data: unknown[] }>('/events'),
   getEvent: (id: string) => request<{ data: unknown }>(`/events/${id}`),
   createEvent: (data: unknown) => request<{ data: unknown }>('/events', { method: 'POST', body: JSON.stringify(data) }),
+  updateEvent: (id: string, data: unknown) => request<{ data: unknown }>(`/events/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Communities
   getCommunities: () => request<{ data: unknown[] }>('/communities'),

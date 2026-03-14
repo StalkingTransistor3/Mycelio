@@ -58,6 +58,7 @@ export interface Event {
   date: string;
   location: string | null;
   description: string | null;
+  url: string | null;
   attendeeIds: string[];
   tags: string[];
   createdAt: string;

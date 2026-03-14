@@ -55,6 +55,7 @@ export const events = pgTable('events', {
   date: timestamp('date', { withTimezone: true }).notNull(),
   location: varchar('location', { length: 255 }),
   description: text('description'),
+  url: varchar('url', { length: 500 }),
   attendeeIds: jsonb('attendee_ids').$type<string[]>().notNull().default([]),
   tags: jsonb('tags').$type<string[]>().notNull().default([]),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -1,4 +1,4 @@
-import { eq, desc } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 
 const { events } = schema;
@@ -8,6 +8,7 @@ export async function createEvent(data: {
   date: Date;
   location?: string;
   description?: string;
+  url?: string;
   attendeeIds?: string[];
   tags?: string[];
 }) {
@@ -18,6 +19,7 @@ export async function createEvent(data: {
       date: data.date,
       location: data.location || null,
       description: data.description || null,
+      url: data.url || null,
       attendeeIds: data.attendeeIds || [],
       tags: data.tags || [],
     })
@@ -25,8 +27,8 @@ export async function createEvent(data: {
   return result[0];
 }
 
-export async function getEvents(limit = 50) {
-  return db.select().from(events).orderBy(desc(events.date)).limit(limit);
+export async function getEvents(limit = 100) {
+  return db.select().from(events).orderBy(asc(events.date)).limit(limit);
 }
 
 export async function getEventById(id: string) {
@@ -39,6 +41,7 @@ export async function updateEvent(id: string, data: Partial<{
   date: Date;
   location: string;
   description: string;
+  url: string;
   attendeeIds: string[];
   tags: string[];
 }>) {

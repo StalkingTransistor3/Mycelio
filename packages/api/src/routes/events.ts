@@ -26,6 +26,7 @@ export async function eventsRoutes(app: FastifyInstance) {
       date: string;
       location?: string;
       description?: string;
+      url?: string;
       attendeeIds?: string[];
       tags?: string[];
     };

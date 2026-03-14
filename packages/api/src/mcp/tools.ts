@@ -222,6 +222,7 @@ export const tools: ToolDefinition[] = [
         date: { type: 'string', description: 'ISO date string' },
         location: { type: 'string', description: 'Event location' },
         description: { type: 'string', description: 'Event description' },
+        url: { type: 'string', description: 'External URL for the event (Meetup, Eventbrite, website, etc.)' },
         attendeeIds: { type: 'array', items: { type: 'string' }, description: 'Array of person UUIDs' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Event tags' },
       },
@@ -233,6 +234,7 @@ export const tools: ToolDefinition[] = [
         date: new Date(args.date as string),
         location: args.location as string | undefined,
         description: args.description as string | undefined,
+        url: args.url as string | undefined,
         attendeeIds: args.attendeeIds as string[] | undefined,
         tags: args.tags as string[] | undefined,
       });
