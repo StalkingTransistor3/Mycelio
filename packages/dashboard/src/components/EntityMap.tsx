@@ -6,7 +6,7 @@ export default function EntityMap() {
       <div className="relative flex flex-col items-center gap-1 text-xs font-mono">
         {/* People - center */}
         <div className="flex items-center gap-8">
-          <EntityBox name="Organizations" color="purple" />
+          <EntityBox name="Organisations" color="purple" />
           <Arrow direction="right" label="belong to" />
           <EntityBox name="People" color="cyan" primary />
           <Arrow direction="right" label="attend" />
@@ -14,15 +14,9 @@ export default function EntityMap() {
         </div>
 
         {/* Vertical connections from People */}
-        <div className="flex gap-[280px]">
-          <div className="flex flex-col items-center">
-            <VertArrow label="grouped in" />
-            <EntityBox name="Communities" color="green" />
-          </div>
-          <div className="flex flex-col items-center">
-            <VertArrow label="logged as" />
-            <EntityBox name="Interactions" color="yellow" />
-          </div>
+        <div className="flex flex-col items-center">
+          <VertArrow label="logged as" />
+          <EntityBox name="Interactions" color="yellow" />
         </div>
 
         {/* Connections - bottom */}
@@ -41,9 +35,9 @@ export default function EntityMap() {
         <Rule icon="T1-T5" text="People have a relationship tier (1 = closest)" />
         <Rule icon="7-90d" text="Follow-up cadence based on tier" />
         <Rule icon="&harr;" text="Connections link two people with context" />
-        <Rule icon="tags" text="People, events, communities have freeform tags" />
+        <Rule icon="tags" text="People, events, organisations have freeform tags" />
         <Rule icon="log" text="Interactions update last contact date" />
-        <Rule icon="health" text="Community health = avg tier + stale members" />
+        <Rule icon="type" text="Organisations can be companies, communities, or other" />
       </div>
     </div>
   );

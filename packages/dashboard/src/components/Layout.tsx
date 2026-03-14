@@ -4,7 +4,7 @@ const navItems = [
   { to: '/', label: 'Overview', icon: '◈' },
   { to: '/people', label: 'People', icon: '⬡' },
   { to: '/events', label: 'Events', icon: '◆' },
-  { to: '/communities', label: 'Communities', icon: '⬢' },
+  { to: '/organisations', label: 'Organisations', icon: '⬢' },
   { to: '/follow-ups', label: 'Follow-ups', icon: '◉' },
   { to: '/graph', label: 'Network', icon: '◇' },
 ];

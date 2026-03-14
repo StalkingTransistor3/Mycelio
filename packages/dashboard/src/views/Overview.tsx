@@ -7,12 +7,12 @@ import { Link } from 'react-router-dom';
 export default function Overview() {
   const { data: peopleRes } = useQuery({ queryKey: ['people'], queryFn: () => api.getPeople() });
   const { data: eventsRes } = useQuery({ queryKey: ['events'], queryFn: api.getEvents });
-  const { data: communitiesRes } = useQuery({ queryKey: ['communities'], queryFn: api.getCommunities });
+  const { data: orgsRes } = useQuery({ queryKey: ['organizations'], queryFn: () => api.getOrganizations() });
   const { data: followUpsRes } = useQuery({ queryKey: ['follow-ups'], queryFn: api.getFollowUps });
 
   const people = peopleRes?.data || [];
   const events = eventsRes?.data || [];
-  const communities = communitiesRes?.data || [];
+  const orgs = orgsRes?.data || [];
   const followUps = (followUpsRes?.data || []) as FollowUp[];
   const overdueCount = followUps.filter((f: FollowUp) => f.overdue).length;
 
@@ -24,7 +24,7 @@ export default function Overview() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard label="People" value={people.length} href="/people" color="cyan" />
         <StatCard label="Events" value={events.length} href="/events" color="magenta" />
-        <StatCard label="Communities" value={communities.length} href="/communities" color="green" />
+        <StatCard label="Organisations" value={orgs.length} href="/organisations" color="green" />
         <StatCard label="Overdue" value={overdueCount} href="/follow-ups" color={overdueCount > 0 ? 'magenta' : 'cyan'} />
       </div>
 

@@ -10,7 +10,6 @@ import { healthRoutes } from './routes/health.js';
 import { peopleRoutes } from './routes/people.js';
 import { interactionsRoutes } from './routes/interactions.js';
 import { eventsRoutes } from './routes/events.js';
-import { communitiesRoutes } from './routes/communities.js';
 import { graphRoutes } from './routes/graph.js';
 import { followUpsRoutes } from './routes/follow-ups.js';
 import { organizationsRoutes } from './routes/organizations.js';
@@ -27,7 +26,6 @@ async function start() {
   await app.register(peopleRoutes, { prefix: '/api' });
   await app.register(interactionsRoutes, { prefix: '/api' });
   await app.register(eventsRoutes, { prefix: '/api' });
-  await app.register(communitiesRoutes, { prefix: '/api' });
   await app.register(graphRoutes, { prefix: '/api' });
   await app.register(followUpsRoutes, { prefix: '/api' });
   await app.register(organizationsRoutes, { prefix: '/api' });

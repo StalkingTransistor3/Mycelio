@@ -14,6 +14,8 @@ export type InteractionType =
 
 export type ConnectionStrength = 'strong' | 'medium' | 'weak';
 
+export type OrganizationType = 'company' | 'community' | 'other';
+
 // ── Core Entities ──
 
 export interface Person {
@@ -35,9 +37,13 @@ export interface Person {
 export interface Organization {
   id: string;
   name: string;
+  type: OrganizationType;
   domain: string | null;
   industry: string | null;
+  description: string | null;
   notes: string | null;
+  memberIds: string[];
+  tags: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -60,16 +66,6 @@ export interface Event {
   description: string | null;
   url: string | null;
   attendeeIds: string[];
-  tags: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Community {
-  id: string;
-  name: string;
-  description: string | null;
-  memberIds: string[];
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -99,7 +95,7 @@ export interface GraphNode {
   id: string;
   name: string;
   tier: RelationshipTier;
-  group: string | null; // community or org name
+  group: string | null; // organization name
   tags: string[];
 }
 
@@ -125,9 +121,9 @@ export interface FollowUp {
   overdue: boolean;
 }
 
-export interface CommunityHealth {
-  communityId: string;
-  communityName: string;
+export interface OrganizationHealth {
+  organizationId: string;
+  organizationName: string;
   memberCount: number;
   avgTier: number;
   recentInteractions: number;

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { usePerson, useInteractions } from '../hooks/usePeople.js';
+import { useOrganization } from '../hooks/useOrganizations.js';
 import AddInteractionForm from '../components/AddInteractionForm.js';
 import { Button } from '../components/FormField.js';
 import type { Interaction } from '@mycelio/shared';
@@ -25,6 +26,7 @@ export default function PersonDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: person, isLoading } = usePerson(id!);
   const { data: interactions } = useInteractions(id);
+  const { data: org } = useOrganization(person?.organizationId || '');
   const [showLogInteraction, setShowLogInteraction] = useState(false);
 
   if (isLoading) return <p className="text-white/30 animate-pulse">Loading...</p>;
@@ -41,6 +43,11 @@ export default function PersonDetail() {
           <div>
             <h2 className="text-2xl font-bold tracking-wide text-white">{person.name}</h2>
             {person.title && <p className="text-white/40 mt-1">{person.title}</p>}
+            {org && (
+              <Link to={`/organisations/${org.id}`} className="text-sm text-neon-purple/60 hover:text-neon-purple transition-colors mt-0.5 inline-block">
+                {org.name}
+              </Link>
+            )}
             {person.email && <p className="text-sm text-white/20">{person.email}</p>}
             {person.phone && <p className="text-sm text-white/20">{person.phone}</p>}
           </div>

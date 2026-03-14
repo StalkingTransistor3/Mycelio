@@ -43,9 +43,16 @@ export const api = {
   createEvent: (data: unknown) => request<{ data: unknown }>('/events', { method: 'POST', body: JSON.stringify(data) }),
   updateEvent: (id: string, data: unknown) => request<{ data: unknown }>(`/events/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
-  // Communities
-  getCommunities: () => request<{ data: unknown[] }>('/communities'),
-  getCommunityHealth: (id: string) => request<{ data: unknown }>(`/communities/${id}/health`),
+  // Organizations
+  getOrganizations: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<{ data: unknown[] }>(`/organizations${qs}`);
+  },
+  getOrganization: (id: string) => request<{ data: unknown }>(`/organizations/${id}`),
+  createOrganization: (data: unknown) => request<{ data: unknown }>('/organizations', { method: 'POST', body: JSON.stringify(data) }),
+  updateOrganization: (id: string, data: unknown) => request<{ data: unknown }>(`/organizations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getOrganizationHealth: (id: string) => request<{ data: unknown }>(`/organizations/${id}/health`),
+  getOrganizationMembers: (id: string) => request<{ data: unknown[] }>(`/organizations/${id}/members`),
 
   // Graph
   getGraph: () => request<{ data: { nodes: unknown[]; edges: unknown[] } }>('/graph'),

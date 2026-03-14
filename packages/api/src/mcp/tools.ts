@@ -2,8 +2,7 @@ import { z } from 'zod';
 import { searchPeople, getPersonById, createPerson, updatePerson } from '../services/people.js';
 import { logInteraction, getInteractionsByPerson } from '../services/interactions.js';
 import { createEvent, getEvents } from '../services/events.js';
-import { getCommunityHealth, getCommunities } from '../services/communities.js';
-import { createOrganization } from '../services/organizations.js';
+import { createOrganization, getOrganizations, getOrganizationByName, getOrganizationHealth } from '../services/organizations.js';
 import { findConnectionPath, createConnection, getGraphData } from '../services/connections.js';
 import { getFollowUps } from '../services/follow-ups.js';
 
@@ -254,20 +253,17 @@ export const tools: ToolDefinition[] = [
       },
     },
     handler: async (args) => {
-      let communityId = args.communityId as string | undefined;
+      let orgId = args.communityId as string | undefined;
 
-      if (!communityId && args.communityName) {
-        const allCommunities = await getCommunities();
-        const match = allCommunities.find((c) =>
-          c.name.toLowerCase().includes((args.communityName as string).toLowerCase())
-        );
-        if (match) communityId = match.id;
+      if (!orgId && args.communityName) {
+        const match = await getOrganizationByName(args.communityName as string);
+        if (match) orgId = match.id;
         else return { error: `Community "${args.communityName}" not found` };
       }
 
-      if (!communityId) return { error: 'communityId or communityName is required' };
+      if (!orgId) return { error: 'communityId or communityName is required' };
 
-      const health = await getCommunityHealth(communityId);
+      const health = await getOrganizationHealth(orgId);
       return health || { error: 'Community not found' };
     },
   },
@@ -280,18 +276,26 @@ export const tools: ToolDefinition[] = [
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Organization name' },
+        type: { type: 'string', enum: ['company', 'community', 'other'], description: 'Type of organization (default: company)' },
         domain: { type: 'string', description: 'Website domain' },
         industry: { type: 'string', description: 'Industry sector' },
+        description: { type: 'string', description: 'Description of the organization' },
         notes: { type: 'string', description: 'Additional notes' },
+        memberIds: { type: 'array', items: { type: 'string' }, description: 'Array of person UUIDs (for communities)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags (e.g. sponsor, host)' },
       },
       required: ['name'],
     },
     handler: async (args) => {
       const org = await createOrganization({
         name: args.name as string,
+        type: args.type as string | undefined,
         domain: args.domain as string | undefined,
         industry: args.industry as string | undefined,
+        description: args.description as string | undefined,
         notes: args.notes as string | undefined,
+        memberIds: args.memberIds as string[] | undefined,
+        tags: args.tags as string[] | undefined,
       });
       return { success: true, organization: org };
     },

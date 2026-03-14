@@ -26,13 +26,17 @@ export const people = pgTable('people', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-// ── Organizations ──
+// ── Organizations (unified: companies, communities, other) ──
 export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: varchar('name', { length: 255 }).notNull(),
+  type: varchar('type', { length: 50 }).notNull().default('company'),
   domain: varchar('domain', { length: 255 }),
   industry: varchar('industry', { length: 255 }),
+  description: text('description'),
   notes: text('notes'),
+  memberIds: jsonb('member_ids').$type<string[]>().notNull().default([]),
+  tags: jsonb('tags').$type<string[]>().notNull().default([]),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -57,17 +61,6 @@ export const events = pgTable('events', {
   description: text('description'),
   url: varchar('url', { length: 500 }),
   attendeeIds: jsonb('attendee_ids').$type<string[]>().notNull().default([]),
-  tags: jsonb('tags').$type<string[]>().notNull().default([]),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
-
-// ── Communities ──
-export const communities = pgTable('communities', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: varchar('name', { length: 255 }).notNull(),
-  description: text('description'),
-  memberIds: jsonb('member_ids').$type<string[]>().notNull().default([]),
   tags: jsonb('tags').$type<string[]>().notNull().default([]),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
