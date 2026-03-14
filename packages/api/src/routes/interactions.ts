@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { logInteraction, getInteractionsByPerson, getRecentInteractions } from '../services/interactions.js';
+import { logInteraction, getInteractionsByPerson, getInteractionsByEvent, getRecentInteractions } from '../services/interactions.js';
 
 export async function interactionsRoutes(app: FastifyInstance) {
   // GET /api/interactions
@@ -7,6 +7,10 @@ export async function interactionsRoutes(app: FastifyInstance) {
     const query = request.query as Record<string, string>;
     if (query.personId) {
       const data = await getInteractionsByPerson(query.personId, query.limit ? parseInt(query.limit) : undefined);
+      return { data };
+    }
+    if (query.eventId) {
+      const data = await getInteractionsByEvent(query.eventId, query.limit ? parseInt(query.limit) : undefined);
       return { data };
     }
     const data = await getRecentInteractions(query.limit ? parseInt(query.limit) : undefined);
@@ -17,7 +21,12 @@ export async function interactionsRoutes(app: FastifyInstance) {
   app.post('/interactions', async (request, reply) => {
     const body = request.body as {
       personId: string;
+      personIds?: string[];
+      eventId?: string;
       type: string;
+      sentiment?: string;
+      energy?: number;
+      initiatedBy?: string;
       summary: string;
       details?: string;
       occurredAt?: string;

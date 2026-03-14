@@ -1,14 +1,22 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGraph } from '../hooks/useGraph.js';
 import NetworkGraph from '../graph/NetworkGraph.js';
+import type { GraphAPI } from '../graph/NetworkGraph.js';
 import GraphControls from '../graph/GraphControls.js';
+import GraphSimControls, { DEFAULT_SIM_PARAMS } from '../graph/GraphSimControls.js';
+import type { SimParams } from '../graph/GraphSimControls.js';
+import GraphSearch from '../graph/GraphSearch.js';
 import type { GraphNode } from '@mycelio/shared';
 
 export default function GraphView() {
   const { data: graph, isLoading, error } = useGraph();
   const [tierFilter, setTierFilter] = useState<number | null>(null);
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
+  const [simParams, setSimParams] = useState<SimParams>({ ...DEFAULT_SIM_PARAMS });
+  const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
+  const [highlightOrgId, setHighlightOrgId] = useState<string | null>(null);
+  const graphApiRef = useRef<GraphAPI | null>(null);
   const navigate = useNavigate();
 
   const handleNodeClick = useCallback(
@@ -17,6 +25,23 @@ export default function GraphView() {
     },
     [navigate],
   );
+
+  const handleGraphReady = useCallback((api: GraphAPI) => {
+    graphApiRef.current = api;
+  }, []);
+
+  const handleHighlight = useCallback((nodeId: string | null, orgId: string | null) => {
+    setHighlightNodeId(nodeId);
+    setHighlightOrgId(orgId);
+  }, []);
+
+  const handlePanToNode = useCallback((nodeId: string) => {
+    graphApiRef.current?.panToNode(nodeId);
+  }, []);
+
+  const handlePanToOrg = useCallback((orgId: string) => {
+    graphApiRef.current?.panToOrg(orgId);
+  }, []);
 
   let filteredNodes = graph ? [...graph.nodes] : [];
 
@@ -48,13 +73,25 @@ export default function GraphView() {
         )}
       </div>
 
-      <GraphControls
-        tierFilter={tierFilter}
-        onTierChange={setTierFilter}
-        groups={groups}
-        orgFilter={orgFilter}
-        onOrgChange={setOrgFilter}
-      />
+      <div className="flex items-center gap-4 mb-4 flex-wrap">
+        <GraphControls
+          tierFilter={tierFilter}
+          onTierChange={setTierFilter}
+          groups={groups}
+          orgFilter={orgFilter}
+          onOrgChange={setOrgFilter}
+        />
+        <GraphSimControls params={simParams} onChange={setSimParams} />
+        <div className="ml-auto">
+          <GraphSearch
+            nodes={filteredNodes}
+            groups={groups}
+            onHighlight={handleHighlight}
+            onPanToNode={handlePanToNode}
+            onPanToOrg={handlePanToOrg}
+          />
+        </div>
+      </div>
 
       {isLoading && <p className="text-white/30 animate-pulse">Loading graph...</p>}
       {error && <p className="text-red-400">Error: {(error as Error).message}</p>}
@@ -68,6 +105,10 @@ export default function GraphView() {
             width={1200}
             height={700}
             onNodeClick={handleNodeClick}
+            simParams={simParams}
+            highlightNodeId={highlightNodeId}
+            highlightOrgId={highlightOrgId}
+            onReady={handleGraphReady}
           />
         </div>
       ) : (

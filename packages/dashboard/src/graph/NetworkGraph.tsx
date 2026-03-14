@@ -1,6 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import * as d3 from 'd3';
 import type { GraphNode, GraphEdge, GraphGroup } from '@mycelio/shared';
+import type { SimParams } from './GraphSimControls.js';
+
+export interface GraphAPI {
+  panToNode: (nodeId: string) => void;
+  panToOrg: (orgId: string) => void;
+}
 
 interface Props {
   nodes: GraphNode[];
@@ -9,6 +15,10 @@ interface Props {
   width: number;
   height: number;
   onNodeClick?: (node: GraphNode) => void;
+  simParams: SimParams;
+  highlightNodeId?: string | null;
+  highlightOrgId?: string | null;
+  onReady?: (api: GraphAPI) => void;
 }
 
 const tierRadius: Record<number, number> = {
@@ -33,7 +43,6 @@ const strengthWidth: Record<string, number> = {
   weak: 1,
 };
 
-// Muted palette for org hull backgrounds
 const ORG_COLORS = [
   '#ff00e5', '#00f0ff', '#39ff14', '#f0ff00', '#ff6600',
   '#aa44ff', '#00ff99', '#ff4466', '#44aaff', '#ffaa00',
@@ -44,9 +53,60 @@ const ORG_COLORS = [
 type SimNode = d3.SimulationNodeDatum & GraphNode;
 type SimLink = d3.SimulationLinkDatum<SimNode> & GraphEdge;
 
-export default function NetworkGraph({ nodes, edges, groups, width, height, onNodeClick }: Props) {
+export default function NetworkGraph({
+  nodes, edges, groups, width, height, onNodeClick,
+  simParams, highlightNodeId, highlightOrgId, onReady,
+}: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const simRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
+  const simNodesRef = useRef<SimNode[]>([]);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const orgCentersRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const nodeSelectionsRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
+  const linkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
 
+  // Pan to a specific node
+  const panToNode = useCallback((nodeId: string) => {
+    const svg = svgRef.current;
+    const zoom = zoomRef.current;
+    if (!svg || !zoom) return;
+
+    const node = simNodesRef.current.find((n) => n.id === nodeId);
+    if (!node || node.x == null || node.y == null) return;
+
+    const svgSel = d3.select(svg);
+    const scale = 1.5;
+    const transform = d3.zoomIdentity
+      .translate(width / 2 - node.x * scale, height / 2 - node.y * scale)
+      .scale(scale);
+
+    svgSel.transition().duration(600).call(zoom.transform as any, transform);
+  }, [width, height]);
+
+  // Pan to an org cluster centroid
+  const panToOrg = useCallback((orgId: string) => {
+    const svg = svgRef.current;
+    const zoom = zoomRef.current;
+    if (!svg || !zoom) return;
+
+    // Compute centroid from current node positions
+    const orgNodes = simNodesRef.current.filter((n) => n.organizationId === orgId);
+    if (orgNodes.length === 0) return;
+
+    const cx = orgNodes.reduce((s, n) => s + (n.x ?? 0), 0) / orgNodes.length;
+    const cy = orgNodes.reduce((s, n) => s + (n.y ?? 0), 0) / orgNodes.length;
+
+    const svgSel = d3.select(svg);
+    const scale = 1.2;
+    const transform = d3.zoomIdentity
+      .translate(width / 2 - cx * scale, height / 2 - cy * scale)
+      .scale(scale);
+
+    svgSel.transition().duration(600).call(zoom.transform as any, transform);
+  }, [width, height]);
+
+  // Build the SVG structure and simulation when data changes
   useEffect(() => {
     if (!svgRef.current || nodes.length === 0) return;
 
@@ -60,20 +120,23 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
       target: e.target,
     }));
 
-    // Compute cluster center positions (radial layout for orgs)
+    simNodesRef.current = simNodes;
+
+    // Compute cluster center positions
     const orgIds = groups.map((g) => g.id);
     const orgCenters = new Map<string, { x: number; y: number }>();
-    const cx = width / 2;
-    const cy = height / 2;
+    const centerX = width / 2;
+    const centerY = height / 2;
     const clusterRadius = Math.min(width, height) * 0.32;
 
     orgIds.forEach((id, i) => {
       const angle = (2 * Math.PI * i) / orgIds.length - Math.PI / 2;
       orgCenters.set(id, {
-        x: cx + clusterRadius * Math.cos(angle),
-        y: cy + clusterRadius * Math.sin(angle),
+        x: centerX + clusterRadius * Math.cos(angle),
+        y: centerY + clusterRadius * Math.sin(angle),
       });
     });
+    orgCentersRef.current = orgCenters;
 
     // Assign color per org
     const orgColorMap = new Map<string, string>();
@@ -85,27 +148,26 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
       .forceSimulation(simNodes)
       .force(
         'link',
-        d3
-          .forceLink<SimNode, SimLink>(simLinks)
-          .id((d) => d.id)
-          .distance(120),
+        d3.forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(simParams.linkDistance),
       )
-      .force('charge', d3.forceManyBody().strength(-180))
-      .force('collision', d3.forceCollide().radius(22))
+      .force('charge', d3.forceManyBody().strength(simParams.repulsion))
+      .force('collision', d3.forceCollide().radius(simParams.collisionRadius))
       .force(
         'x',
         d3.forceX<SimNode>((d) => {
           const center = d.organizationId ? orgCenters.get(d.organizationId) : null;
-          return center ? center.x : cx;
-        }).strength((d) => (d.organizationId ? 0.15 : 0.05)),
+          return center ? center.x : centerX;
+        }).strength((d) => (d.organizationId ? simParams.clusterStrength : 0.05)),
       )
       .force(
         'y',
         d3.forceY<SimNode>((d) => {
           const center = d.organizationId ? orgCenters.get(d.organizationId) : null;
-          return center ? center.y : cy;
-        }).strength((d) => (d.organizationId ? 0.15 : 0.05)),
+          return center ? center.y : centerY;
+        }).strength((d) => (d.organizationId ? simParams.clusterStrength : 0.05)),
       );
+
+    simRef.current = simulation;
 
     // Glow filter
     const defs = svg.append('defs');
@@ -116,24 +178,29 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
     feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
 
     const g = svg.append('g');
+    gRef.current = g;
+
+    const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.2, 4]).on('zoom', (event) => {
+      g.attr('transform', event.transform);
+    });
+    zoomRef.current = zoom;
 
     svg.call(
-      d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.2, 4]).on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      }) as unknown as (selection: d3.Selection<SVGSVGElement, unknown, null, undefined>) => void,
+      zoom as unknown as (selection: d3.Selection<SVGSVGElement, unknown, null, undefined>) => void,
     );
 
-    // Hull layer (rendered behind everything)
+    // Hull layer
     const hullGroup = g.append('g').attr('class', 'hulls');
 
     // Links
     const linkGroup = g.append('g');
-    linkGroup
-      .selectAll('line')
+    const linkSel = linkGroup
+      .selectAll<SVGLineElement, SimLink>('line')
       .data(simLinks)
       .join('line')
       .attr('stroke', 'rgba(0, 240, 255, 0.15)')
       .attr('stroke-width', (d) => strengthWidth[d.strength] || 1);
+    linkSelectionRef.current = linkSel;
 
     // Nodes
     const node = g
@@ -160,6 +227,7 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
             d.fy = null;
           }),
       );
+    nodeSelectionsRef.current = node;
 
     node
       .append('circle')
@@ -183,8 +251,6 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
       onNodeClick?.(d);
     });
 
-    const link = g.selectAll('line');
-
     // Build a lookup for org name by id
     const orgNameMap = new Map<string, string>();
     for (const grp of groups) {
@@ -192,11 +258,11 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
     }
 
     simulation.on('tick', () => {
-      link
-        .attr('x1', (d: unknown) => ((d as SimLink).source as SimNode).x!)
-        .attr('y1', (d: unknown) => ((d as SimLink).source as SimNode).y!)
-        .attr('x2', (d: unknown) => ((d as SimLink).target as SimNode).x!)
-        .attr('y2', (d: unknown) => ((d as SimLink).target as SimNode).y!);
+      linkSel
+        .attr('x1', (d) => ((d.source as SimNode).x!))
+        .attr('y1', (d) => ((d.source as SimNode).y!))
+        .attr('x2', (d) => ((d.target as SimNode).x!))
+        .attr('y2', (d) => ((d.target as SimNode).y!));
 
       node.attr('transform', (d) => `translate(${d.x},${d.y})`);
 
@@ -214,7 +280,6 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
       const hullData: { orgId: string; hull: [number, number][] }[] = [];
       for (const [orgId, points] of orgNodePositions) {
         if (points.length < 3) {
-          // For 1-2 nodes, create a synthetic hull around them
           if (points.length === 1) {
             const [px, py] = points[0];
             const pad = 30;
@@ -247,7 +312,6 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
           continue;
         }
 
-        // Expand points outward by padding for a roomier hull
         const pad = 25;
         const centroidX = points.reduce((s, p) => s + p[0], 0) / points.length;
         const centroidY = points.reduce((s, p) => s + p[1], 0) / points.length;
@@ -273,7 +337,7 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
         .attr('d', (d) => `M${d.hull.map((p) => p.join(',')).join('L')}Z`)
         .attr('fill', (d) => {
           const color = orgColorMap.get(d.orgId) || '#ffffff';
-          return color + '0a'; // very low opacity hex
+          return color + '0a';
         })
         .attr('stroke', (d) => {
           const color = orgColorMap.get(d.orgId) || '#ffffff';
@@ -284,13 +348,12 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
 
       hullPaths.exit().remove();
 
-      // Update org labels at hull centroids
+      // Org labels
       const labelData: { orgId: string; x: number; y: number; name: string }[] = [];
       for (const { orgId, hull } of hullData) {
         const name = orgNameMap.get(orgId);
         if (!name) continue;
         const centroid = d3.polygonCentroid(hull);
-        // Place label above the hull
         const minY = Math.min(...hull.map((p) => p[1]));
         labelData.push({ orgId, x: centroid[0], y: minY - 10, name });
       }
@@ -316,10 +379,82 @@ export default function NetworkGraph({ nodes, edges, groups, width, height, onNo
       labels.exit().remove();
     });
 
+    // Expose API
+    onReady?.({ panToNode, panToOrg });
+
     return () => {
       simulation.stop();
+      simRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, groups, width, height, onNodeClick]);
+
+  // Update forces when simParams change (without rebuilding SVG)
+  useEffect(() => {
+    const sim = simRef.current;
+    if (!sim) return;
+
+    const centerX = width / 2;
+    const orgCenters = orgCentersRef.current;
+
+    const linkForce = sim.force('link') as d3.ForceLink<SimNode, SimLink> | undefined;
+    if (linkForce) linkForce.distance(simParams.linkDistance);
+
+    const chargeForce = sim.force('charge') as d3.ForceManyBody<SimNode> | undefined;
+    if (chargeForce) chargeForce.strength(simParams.repulsion);
+
+    const collisionForce = sim.force('collision') as d3.ForceCollide<SimNode> | undefined;
+    if (collisionForce) collisionForce.radius(simParams.collisionRadius);
+
+    const xForce = sim.force('x') as d3.ForceX<SimNode> | undefined;
+    if (xForce) xForce.strength((d) => (d.organizationId ? simParams.clusterStrength : 0.05));
+
+    const yForce = sim.force('y') as d3.ForceY<SimNode> | undefined;
+    if (yForce) yForce.strength((d) => (d.organizationId ? simParams.clusterStrength : 0.05));
+
+    sim.alpha(0.3).restart();
+  }, [simParams, width]);
+
+  // Update highlight styling
+  useEffect(() => {
+    const nodeSel = nodeSelectionsRef.current;
+    const linkSel = linkSelectionRef.current;
+    if (!nodeSel || !linkSel) return;
+
+    const hasHighlight = highlightNodeId || highlightOrgId;
+
+    nodeSel.select('circle')
+      .transition().duration(300)
+      .attr('fill-opacity', (d) => {
+        if (!hasHighlight) return 0.6;
+        if (highlightNodeId && d.id === highlightNodeId) return 1;
+        if (highlightOrgId && d.organizationId === highlightOrgId) return 0.9;
+        return 0.15;
+      })
+      .attr('stroke-width', (d) => {
+        if (highlightNodeId && d.id === highlightNodeId) return 3;
+        if (highlightOrgId && d.organizationId === highlightOrgId) return 2.5;
+        return 1.5;
+      })
+      .attr('r', (d) => {
+        const base = tierRadius[d.tier] || 10;
+        if (highlightNodeId && d.id === highlightNodeId) return base * 1.5;
+        return base;
+      });
+
+    nodeSel.select('text')
+      .transition().duration(300)
+      .attr('fill', (d) => {
+        if (!hasHighlight) return 'rgba(255, 255, 255, 0.5)';
+        if (highlightNodeId && d.id === highlightNodeId) return 'rgba(255, 255, 255, 0.95)';
+        if (highlightOrgId && d.organizationId === highlightOrgId) return 'rgba(255, 255, 255, 0.8)';
+        return 'rgba(255, 255, 255, 0.12)';
+      });
+
+    linkSel
+      .transition().duration(300)
+      .attr('stroke-opacity', () => hasHighlight ? 0.05 : 1);
+  }, [highlightNodeId, highlightOrgId]);
 
   return (
     <svg

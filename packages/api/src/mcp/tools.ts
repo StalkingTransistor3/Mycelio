@@ -1,10 +1,34 @@
 import { z } from 'zod';
-import { searchPeople, getPersonById, createPerson, updatePerson } from '../services/people.js';
-import { logInteraction, getInteractionsByPerson } from '../services/interactions.js';
-import { createEvent, getEvents } from '../services/events.js';
+import { searchPeople, getPersonById, createPerson, updatePerson, addMilestone, addTalkingPoint, getUpcomingMilestones } from '../services/people.js';
+import { logInteraction, getInteractionsByPerson, getInteractionsByEvent, getPersonSentimentTrajectory } from '../services/interactions.js';
+import { createEvent, getEvents, getEventById } from '../services/events.js';
 import { createOrganization, getOrganizations, getOrganizationByName, getOrganizationHealth } from '../services/organizations.js';
 import { findConnectionPath, createConnection, getGraphData } from '../services/connections.js';
 import { getFollowUps } from '../services/follow-ups.js';
+import { createVenue, searchVenues, getVenueById, getVenueHistory } from '../services/venues.js';
+import { computeCoAttendance } from '../services/co-attendance.js';
+import { findDuplicateOrgs, mergeOrgs } from '../services/deduplication.js';
+import { computeReciprocityIndex } from '../services/reciprocity.js';
+import { transitionStage, getPipeline, suggestStage } from '../services/stages.js';
+import { computeInfluenceScores, detectMicroCommunities, findWarmPath, getSocialContext } from '../services/graph-analytics.js';
+import { analyzeCommPatterns, detectAvailability, getSmartReengagement } from '../services/intelligence.js';
+
+// Helper: resolve a person name to an ID, creating if needed
+async function resolvePersonId(name: string): Promise<string> {
+  const existing = await searchPeople({ query: name, limit: 1 });
+  if (existing.length > 0) return existing[0].id;
+  const newPerson = await createPerson({ name });
+  return newPerson.id;
+}
+
+// Helper: resolve an event name to an ID
+async function resolveEventId(name: string): Promise<string | null> {
+  const allEvents = await getEvents(500);
+  const match = allEvents.find(e =>
+    e.name.toLowerCase().includes(name.toLowerCase())
+  );
+  return match?.id || null;
+}
 
 export interface ToolDefinition {
   name: string;
@@ -21,40 +45,57 @@ export const tools: ToolDefinition[] = [
   // 1. log_interaction
   {
     name: 'log_interaction',
-    description: 'Log a new interaction with a person. Creates the person if they don\'t exist (by name match). Updates lastContactAt automatically.',
+    description: 'Log a new interaction with a person. Creates the person if they don\'t exist (by name match). Updates lastContactAt automatically. Supports multi-person interactions and event linking.',
     inputSchema: {
       type: 'object',
       properties: {
         personName: { type: 'string', description: 'Name of the person' },
         personId: { type: 'string', description: 'UUID of the person (if known)' },
+        personNames: { type: 'array', items: { type: 'string' }, description: 'Names of additional people involved (for group interactions)' },
+        eventId: { type: 'string', description: 'UUID of event this interaction happened at' },
+        eventName: { type: 'string', description: 'Name of event (will search for match)' },
         type: { type: 'string', enum: ['meeting', 'email', 'call', 'social', 'event', 'intro', 'follow_up', 'other'], description: 'Type of interaction' },
         summary: { type: 'string', description: 'Brief summary of the interaction' },
+        sentiment: { type: 'string', enum: ['positive', 'neutral', 'negative'], description: 'Sentiment of the interaction' },
+        energy: { type: 'number', description: 'Energy level 1-5 (1=draining, 5=energizing)' },
+        initiatedBy: { type: 'string', description: 'UUID of the person who initiated the interaction (for reciprocity tracking)' },
         details: { type: 'string', description: 'Detailed notes (optional)' },
         occurredAt: { type: 'string', description: 'ISO date string when interaction occurred (defaults to now)' },
       },
       required: ['type', 'summary'],
     },
     handler: async (args) => {
+      // Resolve primary person
       let personId = args.personId as string | undefined;
-
-      // If no personId but personName, find or create the person
       if (!personId && args.personName) {
-        const existing = await searchPeople({ query: args.personName as string, limit: 1 });
-        if (existing.length > 0) {
-          personId = existing[0].id;
-        } else {
-          const newPerson = await createPerson({ name: args.personName as string });
-          personId = newPerson.id;
-        }
+        personId = await resolvePersonId(args.personName as string);
       }
-
       if (!personId) {
         return { error: 'Either personId or personName is required' };
       }
 
+      // Resolve additional people for group interactions
+      const personNames = args.personNames as string[] | undefined;
+      let personIds: string[] | undefined;
+      if (personNames && personNames.length > 0) {
+        const additionalIds = await Promise.all(personNames.map(n => resolvePersonId(n)));
+        personIds = [personId, ...additionalIds];
+      }
+
+      // Resolve event
+      let eventId = args.eventId as string | undefined;
+      if (!eventId && args.eventName) {
+        eventId = (await resolveEventId(args.eventName as string)) || undefined;
+      }
+
       const interaction = await logInteraction({
         personId,
+        personIds,
+        eventId,
         type: args.type as string,
+        sentiment: args.sentiment as string | undefined,
+        energy: args.energy as number | undefined,
+        initiatedBy: args.initiatedBy as string | undefined,
         summary: args.summary as string,
         details: args.details as string | undefined,
         occurredAt: args.occurredAt ? new Date(args.occurredAt as string) : undefined,
@@ -121,7 +162,17 @@ export const tools: ToolDefinition[] = [
       if (!person) return { error: 'Person not found' };
 
       const interactions = await getInteractionsByPerson(personId, 10);
-      return { person, recentInteractions: interactions };
+      const sentimentTrajectory = await getPersonSentimentTrajectory(personId, 5);
+      return {
+        person,
+        recentInteractions: interactions,
+        sentimentTrajectory,
+        milestones: person.milestones,
+        talkingPoints: (person.talkingPoints as Record<string, unknown>[])?.filter((tp: Record<string, unknown>) => tp.active !== false),
+        archetypes: person.archetypes,
+        values: person.values,
+        commProfile: person.commProfile,
+      };
     },
   },
 
@@ -148,17 +199,30 @@ export const tools: ToolDefinition[] = [
         const person = await getPersonById(aid);
         if (person) {
           const recentInteractions = await getInteractionsByPerson(aid, 3);
+          const sentimentTrajectory = await getPersonSentimentTrajectory(aid, 3);
           attendees.push({
             person,
             recentInteractions,
+            sentimentTrajectory,
+            talkingPoints: (person.talkingPoints as Record<string, unknown>[])?.filter((tp: Record<string, unknown>) => tp.active !== false),
+            milestones: person.milestones,
+            commProfile: person.commProfile,
+            archetypes: person.archetypes,
+            values: person.values,
           });
         }
       }
+
+      const upcomingMilestones = await getUpcomingMilestones(14);
+      const attendeeMilestones = upcomingMilestones.filter(m =>
+        attendeeIds.includes(m.personId)
+      );
 
       return {
         event,
         attendees,
         totalAttendees: attendees.length,
+        upcomingMilestones: attendeeMilestones,
       };
     },
   },
@@ -213,7 +277,7 @@ export const tools: ToolDefinition[] = [
   // 6. log_event
   {
     name: 'log_event',
-    description: 'Create a new event with attendees.',
+    description: 'Create a new event with attendees. Supports structured attendees with roles (speaker, organizer, sponsor, volunteer, host, attendee).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -222,12 +286,38 @@ export const tools: ToolDefinition[] = [
         location: { type: 'string', description: 'Event location' },
         description: { type: 'string', description: 'Event description' },
         url: { type: 'string', description: 'External URL for the event (Meetup, Eventbrite, website, etc.)' },
-        attendeeIds: { type: 'array', items: { type: 'string' }, description: 'Array of person UUIDs' },
+        attendeeIds: { type: 'array', items: { type: 'string' }, description: 'Array of person UUIDs (simple mode)' },
+        attendees: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Person name (will resolve to ID)' },
+              personId: { type: 'string', description: 'Person UUID (if known)' },
+              role: { type: 'string', enum: ['attendee', 'speaker', 'organizer', 'sponsor', 'volunteer', 'host'], description: 'Role at the event' },
+            },
+          },
+          description: 'Structured attendees with roles (name resolution supported)',
+        },
         tags: { type: 'array', items: { type: 'string' }, description: 'Event tags' },
       },
       required: ['name', 'date'],
     },
     handler: async (args) => {
+      // Resolve structured attendees (name → ID)
+      const rawAttendees = args.attendees as { name?: string; personId?: string; role: string }[] | undefined;
+      let resolvedAttendees: { personId: string; role: string }[] | undefined;
+
+      if (rawAttendees && rawAttendees.length > 0) {
+        resolvedAttendees = [];
+        for (const a of rawAttendees) {
+          const pid = a.personId || (a.name ? await resolvePersonId(a.name) : null);
+          if (pid) {
+            resolvedAttendees.push({ personId: pid, role: a.role || 'attendee' });
+          }
+        }
+      }
+
       const event = await createEvent({
         name: args.name as string,
         date: new Date(args.date as string),
@@ -235,6 +325,7 @@ export const tools: ToolDefinition[] = [
         description: args.description as string | undefined,
         url: args.url as string | undefined,
         attendeeIds: args.attendeeIds as string[] | undefined,
+        attendees: resolvedAttendees,
         tags: args.tags as string[] | undefined,
       });
       return { success: true, event };
@@ -339,7 +430,478 @@ export const tools: ToolDefinition[] = [
   // 10. follow_ups
   {
     name: 'follow_ups',
-    description: 'Get the list of people who need follow-up, sorted by urgency. Shows overdue contacts based on relationship tier thresholds.',
+    description: 'Get the list of people who need follow-up, sorted by urgency. Shows overdue contacts, cooling alerts, upcoming milestones, and suggested actions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Max results (default all)' },
+        includeSnoozed: { type: 'boolean', description: 'Include snoozed people (default false)' },
+      },
+    },
+    handler: async (args) => {
+      const followUps = await getFollowUps({ includeSnoozed: args.includeSnoozed as boolean });
+      const limit = args.limit as number | undefined;
+      const data = limit ? followUps.slice(0, limit) : followUps;
+      return { followUps: data, total: data.length };
+    },
+  },
+
+  // 11. bulk_log_event_meetings
+  {
+    name: 'bulk_log_event_meetings',
+    description: 'Log that you met multiple people at an event. Creates one interaction per person, all linked to the event. Updates lastContactAt for each person.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        eventId: { type: 'string', description: 'UUID of the event' },
+        eventName: { type: 'string', description: 'Name of event to search for (if UUID not known)' },
+        peopleNames: { type: 'array', items: { type: 'string' }, description: 'Names of people met at the event' },
+        peopleIds: { type: 'array', items: { type: 'string' }, description: 'UUIDs of people met (alternative to names)' },
+        summary: { type: 'string', description: 'Shared summary for all interactions' },
+        details: { type: 'string', description: 'Shared details (optional)' },
+        occurredAt: { type: 'string', description: 'Date of meeting (defaults to event date or now)' },
+      },
+      required: ['summary'],
+    },
+    handler: async (args) => {
+      // Resolve event
+      let eventId = args.eventId as string | undefined;
+      if (!eventId && args.eventName) {
+        eventId = (await resolveEventId(args.eventName as string)) || undefined;
+      }
+
+      // Get event date as default occurredAt
+      let occurredAt = args.occurredAt ? new Date(args.occurredAt as string) : undefined;
+      if (!occurredAt && eventId) {
+        const event = await getEventById(eventId);
+        if (event) occurredAt = new Date(event.date);
+      }
+
+      // Resolve people
+      const peopleNames = args.peopleNames as string[] | undefined;
+      const peopleIds = args.peopleIds as string[] | undefined;
+      const resolvedIds: string[] = [];
+
+      if (peopleIds) {
+        resolvedIds.push(...peopleIds);
+      }
+      if (peopleNames) {
+        for (const name of peopleNames) {
+          resolvedIds.push(await resolvePersonId(name));
+        }
+      }
+
+      if (resolvedIds.length === 0) {
+        return { error: 'Either peopleNames or peopleIds is required' };
+      }
+
+      // Create one interaction per person, all linked to the event
+      const results = [];
+      for (const pid of resolvedIds) {
+        const interaction = await logInteraction({
+          personId: pid,
+          personIds: [pid],
+          eventId,
+          type: 'event',
+          summary: args.summary as string,
+          details: args.details as string | undefined,
+          occurredAt,
+        });
+        results.push(interaction);
+      }
+
+      return {
+        success: true,
+        interactionsCreated: results.length,
+        eventId: eventId || null,
+        peopleContacted: resolvedIds.length,
+      };
+    },
+  },
+
+  // 12. update_person_profile
+  {
+    name: 'update_person_profile',
+    description: 'Update a person\'s profile metadata: archetypes, values, and communication preferences.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+        archetypes: { type: 'array', items: { type: 'string' }, description: 'Personality archetypes (e.g. high-agency, builder-mentality, connector)' },
+        values: { type: 'array', items: { type: 'string' }, description: 'Core values (e.g. transparency, community-first, innovation)' },
+        commProfile: {
+          type: 'object',
+          properties: {
+            preferredPlatform: { type: 'string', enum: ['email', 'call', 'text', 'linkedin', 'twitter', 'instagram', 'in-person'] },
+            responsePattern: { type: 'string', enum: ['fast', 'moderate', 'slow', 'sporadic'] },
+            communicationStyle: { type: 'string', enum: ['formal', 'casual', 'direct', 'collaborative'] },
+            bestTimes: { type: 'string', description: 'Best times to reach them' },
+            notes: { type: 'string', description: 'Communication notes' },
+          },
+          description: 'Communication style profile',
+        },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        personId = await resolvePersonId(args.personName as string);
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const updateData: Record<string, unknown> = {};
+      if (args.archetypes) updateData.archetypes = args.archetypes;
+      if (args.values) updateData.values = args.values;
+      if (args.commProfile) updateData.commProfile = args.commProfile;
+
+      const person = await updatePerson(personId, updateData);
+      return { success: true, person };
+    },
+  },
+
+  // 13. log_milestone
+  {
+    name: 'log_milestone',
+    description: 'Record a personal milestone for a person (birthday, funding round, job change, wedding, etc.). Recurring milestones will surface in prep briefs annually.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+        type: { type: 'string', enum: ['birthday', 'funding_round', 'job_change', 'wedding', 'child', 'launch', 'award', 'move', 'other'], description: 'Milestone type' },
+        description: { type: 'string', description: 'Description of the milestone' },
+        date: { type: 'string', description: 'Date of the milestone (ISO string)' },
+        recurring: { type: 'boolean', description: 'Whether this recurs annually (e.g. birthdays)' },
+      },
+      required: ['type', 'description'],
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        personId = await resolvePersonId(args.personName as string);
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const result = await addMilestone(personId, {
+        type: args.type as string,
+        description: args.description as string,
+        date: args.date as string | undefined,
+        recurring: args.recurring as boolean | undefined,
+      });
+      return { success: true, milestone: result.milestone, personId };
+    },
+  },
+
+  // 14. save_talking_point
+  {
+    name: 'save_talking_point',
+    description: 'Save a talking point for a person. These surface in prep briefs and person details for future conversations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+        text: { type: 'string', description: 'The talking point' },
+        context: { type: 'string', description: 'Context for when to use this (optional)' },
+      },
+      required: ['text'],
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        personId = await resolvePersonId(args.personName as string);
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const result = await addTalkingPoint(personId, {
+        text: args.text as string,
+        context: args.context as string | undefined,
+      });
+      return { success: true, talkingPoint: result.talkingPoint, personId };
+    },
+  },
+
+  // 15. add_venue
+  {
+    name: 'add_venue',
+    description: 'Create a venue with capacity, vibe tags, contact person, and availability info.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Venue name' },
+        address: { type: 'string', description: 'Physical address' },
+        capacity: { type: 'number', description: 'Max capacity' },
+        vibe: { type: 'array', items: { type: 'string' }, description: 'Vibe tags (casual, rooftop, tech-friendly, loud, intimate, etc.)' },
+        contactPersonName: { type: 'string', description: 'Name of venue contact person' },
+        organizationName: { type: 'string', description: 'Name of owning organization' },
+        notes: { type: 'string', description: 'Notes about the venue' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags' },
+        availability: {
+          type: 'object',
+          properties: {
+            days: { type: 'array', items: { type: 'string' }, description: 'Available days (Mon, Tue, etc.)' },
+            hours: { type: 'string', description: 'Available hours (e.g. 6pm-10pm)' },
+            bookingNotes: { type: 'string', description: 'Booking process notes' },
+          },
+          description: 'Availability details',
+        },
+      },
+      required: ['name'],
+    },
+    handler: async (args) => {
+      let contactPersonId: string | undefined;
+      if (args.contactPersonName) {
+        contactPersonId = await resolvePersonId(args.contactPersonName as string);
+      }
+
+      let organizationId: string | undefined;
+      if (args.organizationName) {
+        const { getOrganizationByName } = await import('../services/organizations.js');
+        const org = await getOrganizationByName(args.organizationName as string);
+        organizationId = org?.id;
+      }
+
+      const venue = await createVenue({
+        name: args.name as string,
+        address: args.address as string | undefined,
+        capacity: args.capacity as number | undefined,
+        vibe: args.vibe as string[] | undefined,
+        contactPersonId,
+        organizationId,
+        notes: args.notes as string | undefined,
+        tags: args.tags as string[] | undefined,
+        availability: args.availability as Record<string, unknown> | undefined,
+      });
+      return { success: true, venue };
+    },
+  },
+
+  // 16. find_venue
+  {
+    name: 'find_venue',
+    description: 'Search for venues by name, minimum capacity, vibe, or tags.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Search by venue name' },
+        minCapacity: { type: 'number', description: 'Minimum capacity needed' },
+        vibe: { type: 'array', items: { type: 'string' }, description: 'Desired vibe tags' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
+      },
+    },
+    handler: async (args) => {
+      const results = await searchVenues({
+        name: args.name as string | undefined,
+        minCapacity: args.minCapacity as number | undefined,
+        vibe: args.vibe as string[] | undefined,
+        tags: args.tags as string[] | undefined,
+      });
+      return { venues: results, count: results.length };
+    },
+  },
+
+  // 17. co_attendance
+  {
+    name: 'co_attendance',
+    description: 'Find who keeps showing up at the same events as a person. Shows shared event count.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        const existing = await searchPeople({ query: args.personName as string, limit: 1 });
+        if (existing.length > 0) personId = existing[0].id;
+        else return { error: `Person "${args.personName}" not found` };
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const coAttendance = await computeCoAttendance(personId);
+
+      // Enrich with person names
+      const enriched = [];
+      for (const ca of coAttendance.slice(0, 20)) {
+        const person = await getPersonById(ca.personId);
+        enriched.push({
+          ...ca,
+          personName: person?.name || 'Unknown',
+        });
+      }
+
+      return { coAttendance: enriched };
+    },
+  },
+
+  // 18. snooze_follow_up
+  {
+    name: 'snooze_follow_up',
+    description: 'Snooze follow-up reminders for a person until a specific date.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+        until: { type: 'string', description: 'Snooze until this date (ISO string)' },
+      },
+      required: ['until'],
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        personId = await resolvePersonId(args.personName as string);
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const person = await updatePerson(personId, {
+        snoozedUntil: new Date(args.until as string),
+      } as Record<string, unknown>);
+      return { success: true, snoozedUntil: args.until, personName: person?.name };
+    },
+  },
+
+  // 19. set_availability
+  {
+    name: 'set_availability',
+    description: 'Update a person\'s current availability/stress status (available, busy, overwhelmed, unknown).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+        status: { type: 'string', enum: ['available', 'busy', 'overwhelmed', 'unknown'], description: 'Availability status' },
+        note: { type: 'string', description: 'Note about their availability (optional)' },
+      },
+      required: ['status'],
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        personId = await resolvePersonId(args.personName as string);
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const availability = {
+        status: args.status as string,
+        note: args.note as string | undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      const person = await updatePerson(personId, { availability } as Record<string, unknown>);
+      return { success: true, personName: person?.name, availability };
+    },
+  },
+
+  // 20. find_duplicate_orgs
+  {
+    name: 'find_duplicate_orgs',
+    description: 'Surface potential duplicate organizations based on fuzzy name matching.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    handler: async () => {
+      const duplicates = await findDuplicateOrgs();
+      return { duplicates, count: duplicates.length };
+    },
+  },
+
+  // 21. merge_orgs
+  {
+    name: 'merge_orgs',
+    description: 'Merge two organizations. Moves all people and data from the removed org to the kept org, then deletes the duplicate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        keepId: { type: 'string', description: 'UUID of the organization to keep' },
+        removeId: { type: 'string', description: 'UUID of the organization to remove (will be deleted)' },
+      },
+      required: ['keepId', 'removeId'],
+    },
+    handler: async (args) => {
+      const result = await mergeOrgs(args.keepId as string, args.removeId as string);
+      return { success: true, ...result };
+    },
+  },
+
+  // 22. reciprocity_index
+  {
+    name: 'reciprocity_index',
+    description: 'Get the reciprocity index for a relationship. Measures initiation balance, sentiment trajectory, energy levels, and response patterns. Returns a 0-100 score (50=balanced) and assessment.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        const existing = await searchPeople({ query: args.personName as string, limit: 1 });
+        if (existing.length > 0) personId = existing[0].id;
+        else return { error: `Person "${args.personName}" not found` };
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const reciprocity = await computeReciprocityIndex(personId);
+      if (!reciprocity) return { error: 'Person not found' };
+      return reciprocity;
+    },
+  },
+
+  // 23. update_stage
+  {
+    name: 'update_stage',
+    description: 'Move a person through the relationship pipeline. Stages: prospect → warm → active → collaborator → inner_circle. Records transition history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+        stage: { type: 'string', enum: ['prospect', 'warm', 'active', 'collaborator', 'inner_circle'], description: 'New stage' },
+        reason: { type: 'string', description: 'Reason for the transition' },
+      },
+      required: ['stage'],
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        personId = await resolvePersonId(args.personName as string);
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const result = await transitionStage(personId, args.stage as any, args.reason as string | undefined);
+      if (!result) return { error: 'Person not found' };
+      return { success: true, ...result };
+    },
+  },
+
+  // 24. get_pipeline
+  {
+    name: 'get_pipeline',
+    description: 'Get the full relationship pipeline showing all people organized by stage (prospect, warm, active, collaborator, inner_circle).',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    handler: async () => {
+      const pipeline = await getPipeline();
+      const summary: Record<string, number> = {};
+      for (const [stage, people] of Object.entries(pipeline)) {
+        summary[stage] = people.length;
+      }
+      return { pipeline, summary };
+    },
+  },
+
+  // 25. influence_scores
+  {
+    name: 'influence_scores',
+    description: 'Compute influence metrics for people in the network. Shows degree centrality, betweenness centrality, cluster coefficient, and composite influence score (0-100).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -347,10 +909,161 @@ export const tools: ToolDefinition[] = [
       },
     },
     handler: async (args) => {
-      const followUps = await getFollowUps();
-      const limit = args.limit as number | undefined;
-      const data = limit ? followUps.slice(0, limit) : followUps;
-      return { followUps: data, total: data.length };
+      const scores = await computeInfluenceScores();
+      const limit = (args.limit as number) || scores.length;
+      return { influencers: scores.slice(0, limit), total: scores.length };
+    },
+  },
+
+  // 26. detect_communities
+  {
+    name: 'detect_communities',
+    description: 'Detect micro-communities in the network based on connection patterns. Shows member lists, shared tags, and cohesion scores.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    handler: async () => {
+      const communities = await detectMicroCommunities();
+      return { communities, count: communities.length };
+    },
+  },
+
+  // 27. warm_intro_path
+  {
+    name: 'warm_intro_path',
+    description: 'Find the warmest introduction path between two people. Factors in connection strength and relationship tier to find the most natural route.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fromPersonId: { type: 'string', description: 'UUID of the starting person' },
+        fromPersonName: { type: 'string', description: 'Name of the starting person' },
+        toPersonId: { type: 'string', description: 'UUID of the target person' },
+        toPersonName: { type: 'string', description: 'Name of the target person' },
+      },
+    },
+    handler: async (args) => {
+      let fromId = args.fromPersonId as string | undefined;
+      let toId = args.toPersonId as string | undefined;
+
+      if (!fromId && args.fromPersonName) {
+        const found = await searchPeople({ query: args.fromPersonName as string, limit: 1 });
+        if (found.length > 0) fromId = found[0].id;
+        else return { error: `Person "${args.fromPersonName}" not found` };
+      }
+      if (!toId && args.toPersonName) {
+        const found = await searchPeople({ query: args.toPersonName as string, limit: 1 });
+        if (found.length > 0) toId = found[0].id;
+        else return { error: `Person "${args.toPersonName}" not found` };
+      }
+      if (!fromId || !toId) return { error: 'Both from and to person are required' };
+
+      const paths = await findWarmPath(fromId, toId);
+      return { paths, pathCount: paths.length };
+    },
+  },
+
+  // 28. social_context
+  {
+    name: 'social_context',
+    description: 'Get a person\'s social context: direct connections, mutual friends, overlapping circles, and shared interests.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        const found = await searchPeople({ query: args.personName as string, limit: 1 });
+        if (found.length > 0) personId = found[0].id;
+        else return { error: `Person "${args.personName}" not found` };
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const context = await getSocialContext(personId);
+      if (!context) return { error: 'Person not found' };
+      return context;
+    },
+  },
+
+  // 29. comm_patterns
+  {
+    name: 'comm_patterns',
+    description: 'Analyze communication patterns for a person. Shows best channels, timing patterns, sentiment trajectory, and recommended approach.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        const found = await searchPeople({ query: args.personName as string, limit: 1 });
+        if (found.length > 0) personId = found[0].id;
+        else return { error: `Person "${args.personName}" not found` };
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const patterns = await analyzeCommPatterns(personId);
+      if (!patterns) return { error: 'No interaction data found' };
+      return patterns;
+    },
+  },
+
+  // 30. detect_stress
+  {
+    name: 'detect_stress',
+    description: 'Auto-detect a person\'s availability/stress level from interaction patterns. Analyzes sentiment trends, energy levels, and response gaps.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        const found = await searchPeople({ query: args.personName as string, limit: 1 });
+        if (found.length > 0) personId = found[0].id;
+        else return { error: `Person "${args.personName}" not found` };
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const result = await detectAvailability(personId);
+      if (!result) return { error: 'Person not found' };
+      return result;
+    },
+  },
+
+  // 31. smart_reengagement
+  {
+    name: 'smart_reengagement',
+    description: 'Get smart re-engagement advice for a person. Factors in time since contact, tier importance, upcoming milestones, communication preferences, and relationship trajectory.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        const found = await searchPeople({ query: args.personName as string, limit: 1 });
+        if (found.length > 0) personId = found[0].id;
+        else return { error: `Person "${args.personName}" not found` };
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      const result = await getSmartReengagement(personId);
+      if (!result) return { error: 'Person not found' };
+      return result;
     },
   },
 ];

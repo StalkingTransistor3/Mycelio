@@ -7,6 +7,7 @@ import {
   getOrganizationHealth,
   getOrganizationMembers,
 } from '../services/organizations.js';
+import { findDuplicateOrgs, mergeOrgs } from '../services/deduplication.js';
 
 export async function organizationsRoutes(app: FastifyInstance) {
   // GET /api/organizations?type=community
@@ -74,5 +75,21 @@ export async function organizationsRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: 'Not found', message: 'Organization not found', statusCode: 404 });
     }
     return { data: org };
+  });
+
+  // GET /api/organizations/duplicates
+  app.get('/organizations/duplicates', async () => {
+    const duplicates = await findDuplicateOrgs();
+    return { data: duplicates };
+  });
+
+  // POST /api/organizations/merge
+  app.post('/organizations/merge', async (request, reply) => {
+    const body = request.body as { keepId: string; removeId: string };
+    if (!body.keepId || !body.removeId) {
+      return reply.code(400).send({ error: 'Bad request', message: 'keepId and removeId are required', statusCode: 400 });
+    }
+    const result = await mergeOrgs(body.keepId, body.removeId);
+    return { data: result };
   });
 }

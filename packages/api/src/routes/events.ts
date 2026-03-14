@@ -28,6 +28,7 @@ export async function eventsRoutes(app: FastifyInstance) {
       description?: string;
       url?: string;
       attendeeIds?: string[];
+      attendees?: { personId: string; role: string }[];
       tags?: string[];
     };
     if (!body.name || !body.date) {

@@ -62,4 +62,55 @@ export const api = {
 
   // Connections
   createConnection: (data: unknown) => request<{ data: unknown }>('/connections', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Milestones & Talking Points
+  addMilestone: (personId: string, data: unknown) => request<{ data: unknown }>(`/people/${personId}/milestones`, { method: 'POST', body: JSON.stringify(data) }),
+  addTalkingPoint: (personId: string, data: unknown) => request<{ data: unknown }>(`/people/${personId}/talking-points`, { method: 'POST', body: JSON.stringify(data) }),
+  getSentiment: (personId: string) => request<{ data: unknown[] }>(`/people/${personId}/sentiment`),
+  getUpcomingMilestones: (days = 30) => request<{ data: unknown[] }>(`/milestones/upcoming?days=${days}`),
+
+  // Co-attendance & Reciprocity
+  getCoAttendance: (personId: string) => request<{ data: unknown[] }>(`/people/${personId}/co-attendance`),
+  getReciprocity: (personId: string) => request<{ data: unknown }>(`/people/${personId}/reciprocity`),
+
+  // Snooze & Availability
+  snoozePerson: (personId: string, until: string) => request<{ data: unknown }>(`/people/${personId}/snooze`, { method: 'PUT', body: JSON.stringify({ until }) }),
+  setAvailability: (personId: string, status: string, note?: string) => request<{ data: unknown }>(`/people/${personId}/availability`, { method: 'PUT', body: JSON.stringify({ status, note }) }),
+
+  // Venues
+  getVenues: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<{ data: unknown[] }>(`/venues${qs}`);
+  },
+  getVenue: (id: string) => request<{ data: unknown }>(`/venues/${id}`),
+  createVenue: (data: unknown) => request<{ data: unknown }>('/venues', { method: 'POST', body: JSON.stringify(data) }),
+  updateVenue: (id: string, data: unknown) => request<{ data: unknown }>(`/venues/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getVenueEvents: (venueId: string) => request<{ data: unknown[] }>(`/venues/${venueId}/events`),
+
+  // Org Deduplication
+  getOrgDuplicates: () => request<{ data: unknown[] }>('/organizations/duplicates'),
+  mergeOrgs: (keepId: string, removeId: string) => request<{ data: unknown }>('/organizations/merge', { method: 'POST', body: JSON.stringify({ keepId, removeId }) }),
+
+  // Graph analytics
+  getGraphPath: (fromId: string, toId: string) => request<{ data: unknown }>(`/graph/path?from=${fromId}&to=${toId}`),
+  getInfluenceScores: () => request<{ data: unknown[] }>('/graph/influence'),
+  getCommunities: () => request<{ data: unknown[] }>('/graph/communities'),
+  getWarmPath: (fromId: string, toId: string) => request<{ data: unknown[] }>(`/graph/warm-path?from=${fromId}&to=${toId}`),
+  getSocialContext: (personId: string) => request<{ data: unknown }>(`/graph/social-context/${personId}`),
+
+  // Pipeline & Stages
+  getPipeline: () => request<{ data: unknown }>('/pipeline'),
+  updateStage: (personId: string, stage: string, reason?: string) => request<{ data: unknown }>(`/people/${personId}/stage`, { method: 'PUT', body: JSON.stringify({ stage, reason }) }),
+  getStageSuggestion: (personId: string) => request<{ data: unknown }>(`/people/${personId}/stage-suggestion`),
+
+  // Intelligence
+  getCommPatterns: (personId: string) => request<{ data: unknown }>(`/people/${personId}/comm-patterns`),
+  detectAvailability: (personId: string) => request<{ data: unknown }>(`/people/${personId}/detect-availability`),
+  getSmartReengagement: (personId: string) => request<{ data: unknown }>(`/people/${personId}/smart-reengagement`),
+
+  // Follow-ups with params
+  getFollowUpsFiltered: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<{ data: unknown[] }>(`/follow-ups${qs}`);
+  },
 };

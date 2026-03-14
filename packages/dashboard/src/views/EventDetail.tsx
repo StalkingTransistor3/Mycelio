@@ -2,7 +2,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useEvent } from '../hooks/useEvents.js';
 import { api } from '../api/client.js';
 import { useQuery } from '@tanstack/react-query';
-import type { Person } from '@mycelio/shared';
+import type { Person, EventAttendee } from '@mycelio/shared';
 
 export default function EventDetail() {
   const { id } = useParams<{ id: string }>();
@@ -102,20 +102,68 @@ export default function EventDetail() {
             Attendees ({event.attendeeIds.length})
           </h3>
           {attendees && attendees.length > 0 ? (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {attendees.map((person) => (
-                <Link
-                  key={person.id}
-                  to={`/people/${person.id}`}
-                  className="glass rounded-lg p-3 hover:bg-white/[0.07] transition-colors group"
-                >
-                  <p className="text-sm text-white group-hover:text-neon-cyan transition-colors">{person.name}</p>
-                  {person.title && (
-                    <p className="text-xs text-white/30 mt-0.5">{person.title}</p>
-                  )}
-                </Link>
-              ))}
-            </div>
+            (() => {
+              // Build role map from structured attendees
+              const roleMap = new Map<string, string>();
+              const structuredAttendees = (event.attendees || []) as EventAttendee[];
+              for (const a of structuredAttendees) {
+                roleMap.set(a.personId, a.role);
+              }
+
+              // Group attendees by role
+              const roleOrder = ['speaker', 'organizer', 'host', 'sponsor', 'volunteer', 'attendee'];
+              const roleLabels: Record<string, string> = {
+                speaker: 'Speakers', organizer: 'Organizers', host: 'Hosts',
+                sponsor: 'Sponsors', volunteer: 'Volunteers', attendee: 'Attendees',
+              };
+              const roleColors: Record<string, string> = {
+                speaker: 'text-neon-magenta', organizer: 'text-neon-cyan',
+                host: 'text-neon-green', sponsor: 'text-neon-yellow',
+                volunteer: 'text-neon-purple', attendee: 'text-white/60',
+              };
+
+              const grouped: Record<string, Person[]> = {};
+              for (const person of attendees) {
+                const role = roleMap.get(person.id) || 'attendee';
+                if (!grouped[role]) grouped[role] = [];
+                grouped[role].push(person);
+              }
+
+              const sortedRoles = roleOrder.filter(r => grouped[r]?.length > 0);
+              // If no structured roles, just show all as one flat list
+              if (structuredAttendees.length === 0) {
+                return (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {attendees.map((person) => (
+                      <Link key={person.id} to={`/people/${person.id}`} className="glass rounded-lg p-3 hover:bg-white/[0.07] transition-colors group">
+                        <p className="text-sm text-white group-hover:text-neon-cyan transition-colors">{person.name}</p>
+                        {person.title && <p className="text-xs text-white/30 mt-0.5">{person.title}</p>}
+                      </Link>
+                    ))}
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-4">
+                  {sortedRoles.map(role => (
+                    <div key={role}>
+                      <p className={`text-xs font-mono uppercase tracking-wider mb-2 ${roleColors[role] || 'text-white/40'}`}>
+                        {roleLabels[role] || role} ({grouped[role].length})
+                      </p>
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {grouped[role].map((person) => (
+                          <Link key={person.id} to={`/people/${person.id}`} className="glass rounded-lg p-3 hover:bg-white/[0.07] transition-colors group">
+                            <p className="text-sm text-white group-hover:text-neon-cyan transition-colors">{person.name}</p>
+                            {person.title && <p className="text-xs text-white/30 mt-0.5">{person.title}</p>}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()
           ) : event.attendeeIds.length === 0 ? (
             <p className="text-white/20 text-sm">No attendees recorded.</p>
           ) : (

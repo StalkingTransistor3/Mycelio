@@ -21,7 +21,7 @@ export default function GraphControls({ tierFilter, onTierChange, groups, orgFil
   const sortedGroups = [...groups].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <div className="flex items-center gap-4 mb-4 flex-wrap">
+    <div className="flex items-center gap-4 flex-wrap">
       <label className="text-[10px] font-medium text-white/30 uppercase tracking-wider">Filter</label>
       <select
         value={tierFilter ?? ''}

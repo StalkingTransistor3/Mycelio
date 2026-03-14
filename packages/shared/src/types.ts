@@ -14,7 +14,90 @@ export type InteractionType =
 
 export type ConnectionStrength = 'strong' | 'medium' | 'weak';
 
+export type ConnectionType =
+  | 'colleague'
+  | 'mentor'
+  | 'mentee'
+  | 'co-founder'
+  | 'friend'
+  | 'investor'
+  | 'client'
+  | 'collaborator'
+  | 'community'
+  | 'other';
+
+export type AttendeeRole =
+  | 'attendee'
+  | 'speaker'
+  | 'organizer'
+  | 'sponsor'
+  | 'volunteer'
+  | 'host';
+
+export interface EventAttendee {
+  personId: string;
+  role: AttendeeRole;
+}
+
 export type OrganizationType = 'company' | 'community' | 'other';
+
+export type Sentiment = 'positive' | 'neutral' | 'negative';
+
+export type MilestoneType =
+  | 'birthday'
+  | 'funding_round'
+  | 'job_change'
+  | 'wedding'
+  | 'child'
+  | 'launch'
+  | 'award'
+  | 'move'
+  | 'other';
+
+export interface CommProfile {
+  preferredPlatform?: 'email' | 'call' | 'text' | 'linkedin' | 'twitter' | 'instagram' | 'in-person';
+  responsePattern?: 'fast' | 'moderate' | 'slow' | 'sporadic';
+  communicationStyle?: 'formal' | 'casual' | 'direct' | 'collaborative';
+  bestTimes?: string;
+  notes?: string;
+}
+
+export interface Milestone {
+  id: string;
+  type: MilestoneType;
+  description: string;
+  date?: string;
+  recurring?: boolean;
+  createdAt: string;
+}
+
+export interface TalkingPoint {
+  id: string;
+  text: string;
+  context?: string;
+  createdAt: string;
+  usedAt?: string;
+  active: boolean;
+}
+
+export type AvailabilityStatus = 'available' | 'busy' | 'overwhelmed' | 'unknown';
+
+export interface PersonAvailability {
+  status: AvailabilityStatus;
+  note?: string;
+  updatedAt: string;
+}
+
+export interface FollowUpConfig {
+  cadenceDays?: number;
+  notes?: string;
+}
+
+export interface VenueAvailability {
+  days?: string[];
+  hours?: string;
+  bookingNotes?: string;
+}
 
 // ── Core Entities ──
 
@@ -28,8 +111,19 @@ export interface Person {
   instagram: string | null;
   title: string | null;
   organizationId: string | null;
+  organizationIds: string[];
   tier: RelationshipTier;
   tags: string[];
+  archetypes: string[];
+  values: string[];
+  commProfile: CommProfile | null;
+  milestones: Milestone[];
+  talkingPoints: TalkingPoint[];
+  availability: PersonAvailability | null;
+  stage: RelationshipStage | null;
+  stageHistory: StageTransition[];
+  followUpConfig: FollowUpConfig | null;
+  snoozedUntil: string | null;
   notes: string | null;
   lastContactAt: string | null;
   nextFollowUpAt: string | null;
@@ -54,7 +148,12 @@ export interface Organization {
 export interface Interaction {
   id: string;
   personId: string;
+  personIds: string[];
+  eventId: string | null;
   type: InteractionType;
+  sentiment: Sentiment | null;
+  energy: number | null;
+  initiatedBy: string | null;
   summary: string;
   details: string | null;
   occurredAt: string;
@@ -65,10 +164,12 @@ export interface Event {
   id: string;
   name: string;
   date: string;
+  venueId: string | null;
   location: string | null;
   description: string | null;
   url: string | null;
   attendeeIds: string[];
+  attendees: EventAttendee[];
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -79,8 +180,26 @@ export interface Connection {
   fromPersonId: string;
   toPersonId: string;
   strength: ConnectionStrength;
+  type: ConnectionType | null;
   context: string | null;
+  howMet: string | null;
+  connectedAt: string | null;
   createdAt: string;
+}
+
+export interface Venue {
+  id: string;
+  name: string;
+  address: string | null;
+  capacity: number | null;
+  vibe: string[];
+  contactPersonId: string | null;
+  organizationId: string | null;
+  notes: string | null;
+  tags: string[];
+  availability: VenueAvailability | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ── API Types ──
@@ -98,8 +217,9 @@ export interface GraphNode {
   id: string;
   name: string;
   tier: RelationshipTier;
-  group: string | null; // organization name
+  group: string | null; // primary organization name
   organizationId: string | null;
+  organizationIds?: string[];
   tags: string[];
 }
 
@@ -130,6 +250,10 @@ export interface FollowUp {
   nextFollowUpAt: string | null;
   daysSinceContact: number | null;
   overdue: boolean;
+  snoozedUntil?: string | null;
+  coolingAlert?: boolean;
+  upcomingMilestone?: { type: string; description: string; daysUntil: number } | null;
+  suggestedAction?: string | null;
 }
 
 export interface OrganizationHealth {
@@ -139,6 +263,62 @@ export interface OrganizationHealth {
   avgTier: number;
   recentInteractions: number;
   staleMemberCount: number;
+}
+
+// ── Reciprocity ──
+
+export interface ReciprocityIndex {
+  personId: string;
+  personName: string;
+  score: number; // 0-100, 50 = perfectly balanced
+  breakdown: {
+    totalInteractions: number;
+    youInitiated: number;
+    theyInitiated: number;
+    unknownInitiator: number;
+    initiationRatio: number; // 0-1, 0.5 = balanced
+    avgResponseGapDays: number | null;
+    sentimentBalance: { positive: number; neutral: number; negative: number };
+    energyAvg: number | null;
+    lastInteraction: string | null;
+    interactionFrequencyDays: number | null; // avg days between interactions
+  };
+  assessment: 'balanced' | 'you-lead' | 'they-lead' | 'one-sided' | 'insufficient-data';
+}
+
+// ── Relationship Stages ──
+
+export type RelationshipStage =
+  | 'prospect'
+  | 'warm'
+  | 'active'
+  | 'collaborator'
+  | 'inner_circle';
+
+export interface StageTransition {
+  from: RelationshipStage | null;
+  to: RelationshipStage;
+  at: string;
+  reason?: string;
+}
+
+// ── Influence & Group Dynamics ──
+
+export interface PersonInfluence {
+  personId: string;
+  personName: string;
+  degreeCentrality: number;
+  betweennessCentrality: number;
+  clusterCoefficient: number;
+  influenceScore: number; // composite 0-100
+}
+
+export interface MicroCommunity {
+  id: string;
+  name: string;
+  memberIds: string[];
+  sharedTags: string[];
+  cohesion: number; // 0-1
 }
 
 export interface ApiResponse<T> {

@@ -1,8 +1,8 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import type { OrganizationHealth } from '@mycelio/shared';
 
-const { organizations, people } = schema;
+const { organizations, people, interactions } = schema;
 
 export async function getOrganizations(filter?: { type?: string }) {
   const query = db.select().from(organizations).orderBy(organizations.name);
@@ -115,12 +115,25 @@ export async function getOrganizationHealth(orgId: string): Promise<Organization
     (m) => !m.lastContactAt || m.lastContactAt < thirtyDaysAgo
   ).length;
 
+  // Count recent interactions for org members (last 30 days)
+  let recentInteractionCount = 0;
+  if (allMembers.length > 0) {
+    const memberIdList = allMembers.map(m => m.id);
+    for (const mid of memberIdList) {
+      const count = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(interactions)
+        .where(sql`(${interactions.personId} = ${mid} OR ${interactions.personIds}::jsonb @> ${JSON.stringify([mid])}::jsonb) AND ${interactions.occurredAt} >= ${thirtyDaysAgo.toISOString()}`);
+      recentInteractionCount += Number(count[0]?.count || 0);
+    }
+  }
+
   return {
     organizationId: org.id,
     organizationName: org.name,
     memberCount: allMembers.length,
     avgTier: Math.round(avgTier * 10) / 10,
-    recentInteractions: 0,
+    recentInteractions: recentInteractionCount,
     staleMemberCount,
   };
 }
