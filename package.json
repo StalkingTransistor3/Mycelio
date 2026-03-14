@@ -1,0 +1,21 @@
+{
+  "name": "mycelio",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/api",
+    "packages/dashboard"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w packages/api",
+    "dev:dashboard": "npm run dev -w packages/dashboard",
+    "build": "npm run build -w packages/shared && npm run build -w packages/api && npm run build -w packages/dashboard",
+    "db:generate": "npm run db:generate -w packages/api",
+    "db:push": "npm run db:push -w packages/api",
+    "mcp": "npm run mcp -w packages/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
