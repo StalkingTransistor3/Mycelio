@@ -1,0 +1,46 @@
+import { FastifyInstance } from 'fastify';
+import { getOrganizations, getOrganizationById, createOrganization, updateOrganization } from '../services/organizations.js';
+
+export async function organizationsRoutes(app: FastifyInstance) {
+  // GET /api/organizations
+  app.get('/organizations', async () => {
+    const data = await getOrganizations();
+    return { data };
+  });
+
+  // GET /api/organizations/:id
+  app.get('/organizations/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const org = await getOrganizationById(id);
+    if (!org) {
+      return reply.code(404).send({ error: 'Not found', message: 'Organization not found', statusCode: 404 });
+    }
+    return { data: org };
+  });
+
+  // POST /api/organizations
+  app.post('/organizations', async (request, reply) => {
+    const body = request.body as {
+      name: string;
+      domain?: string;
+      industry?: string;
+      notes?: string;
+    };
+    if (!body.name) {
+      return reply.code(400).send({ error: 'Bad request', message: 'name is required', statusCode: 400 });
+    }
+    const org = await createOrganization(body);
+    return reply.code(201).send({ data: org });
+  });
+
+  // PUT /api/organizations/:id
+  app.put('/organizations/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const org = await updateOrganization(id, body as any);
+    if (!org) {
+      return reply.code(404).send({ error: 'Not found', message: 'Organization not found', statusCode: 404 });
+    }
+    return { data: org };
+  });
+}
