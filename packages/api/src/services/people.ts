@@ -21,7 +21,7 @@ export async function searchPeople(params: PeopleSearchParams) {
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
-  const limit = params.limit || 500;
+  const limit = params.limit || 5000;
   const offset = params.offset || 0;
 
   const results = await db
