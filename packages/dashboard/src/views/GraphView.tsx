@@ -8,6 +8,7 @@ import type { GraphNode } from '@mycelio/shared';
 export default function GraphView() {
   const { data: graph, isLoading, error } = useGraph();
   const [tierFilter, setTierFilter] = useState<number | null>(null);
+  const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const handleNodeClick = useCallback(
@@ -17,16 +18,24 @@ export default function GraphView() {
     [navigate],
   );
 
-  const filteredNodes = graph
-    ? tierFilter
-      ? graph.nodes.filter((n: GraphNode) => n.tier <= tierFilter)
-      : graph.nodes
+  let filteredNodes = graph ? [...graph.nodes] : [];
+
+  if (tierFilter) {
+    filteredNodes = filteredNodes.filter((n) => n.tier <= tierFilter);
+  }
+
+  if (orgFilter === '__none__') {
+    filteredNodes = filteredNodes.filter((n) => !n.organizationId);
+  } else if (orgFilter) {
+    filteredNodes = filteredNodes.filter((n) => n.organizationId === orgFilter);
+  }
+
+  const nodeIds = new Set(filteredNodes.map((n) => n.id));
+  const filteredEdges = graph
+    ? graph.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
     : [];
 
-  const nodeIds = new Set(filteredNodes.map((n: GraphNode) => n.id));
-  const filteredEdges = graph
-    ? graph.edges.filter((e: { source: string; target: string }) => nodeIds.has(e.source) && nodeIds.has(e.target))
-    : [];
+  const groups = graph?.groups ?? [];
 
   return (
     <div className="h-full flex flex-col">
@@ -39,7 +48,13 @@ export default function GraphView() {
         )}
       </div>
 
-      <GraphControls tierFilter={tierFilter} onTierChange={setTierFilter} />
+      <GraphControls
+        tierFilter={tierFilter}
+        onTierChange={setTierFilter}
+        groups={groups}
+        orgFilter={orgFilter}
+        onOrgChange={setOrgFilter}
+      />
 
       {isLoading && <p className="text-white/30 animate-pulse">Loading graph...</p>}
       {error && <p className="text-red-400">Error: {(error as Error).message}</p>}
@@ -49,6 +64,7 @@ export default function GraphView() {
           <NetworkGraph
             nodes={filteredNodes}
             edges={filteredEdges}
+            groups={groups}
             width={1200}
             height={700}
             onNodeClick={handleNodeClick}

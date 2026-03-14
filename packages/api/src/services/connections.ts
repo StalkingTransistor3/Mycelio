@@ -1,8 +1,8 @@
 import { eq, or } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
-import type { GraphData, GraphNode, GraphEdge, ConnectionStrength } from '@mycelio/shared';
+import type { GraphData, GraphNode, GraphEdge, GraphGroup, ConnectionStrength } from '@mycelio/shared';
 
-const { connections, people } = schema;
+const { connections, people, organizations } = schema;
 
 export async function createConnection(data: {
   fromPersonId: string;
@@ -35,14 +35,27 @@ export async function getConnectionsForPerson(personId: string) {
 }
 
 export async function getGraphData(): Promise<GraphData> {
-  const allPeople = await db.select().from(people);
+  const allPeople = await db
+    .select({
+      id: people.id,
+      name: people.name,
+      tier: people.tier,
+      tags: people.tags,
+      organizationId: people.organizationId,
+      orgName: organizations.name,
+      orgType: organizations.type,
+    })
+    .from(people)
+    .leftJoin(organizations, eq(people.organizationId, organizations.id));
+
   const allConnections = await db.select().from(connections);
 
   const nodes: GraphNode[] = allPeople.map((p) => ({
     id: p.id,
     name: p.name,
     tier: p.tier as 1 | 2 | 3 | 4 | 5,
-    group: null,
+    group: p.orgName || null,
+    organizationId: p.organizationId || null,
     tags: p.tags as string[],
   }));
 
@@ -53,7 +66,20 @@ export async function getGraphData(): Promise<GraphData> {
     context: c.context,
   }));
 
-  return { nodes, edges };
+  // Build groups from orgs that have people in the graph
+  const orgMap = new Map<string, GraphGroup>();
+  for (const p of allPeople) {
+    if (p.organizationId && p.orgName && !orgMap.has(p.organizationId)) {
+      orgMap.set(p.organizationId, {
+        id: p.organizationId,
+        name: p.orgName,
+        type: p.orgType || 'company',
+      });
+    }
+  }
+  const groups: GraphGroup[] = Array.from(orgMap.values());
+
+  return { nodes, edges, groups };
 }
 
 export async function findConnectionPath(

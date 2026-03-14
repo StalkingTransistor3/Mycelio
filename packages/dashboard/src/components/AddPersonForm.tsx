@@ -12,14 +12,14 @@ interface Props {
 export default function AddPersonForm({ open, onClose }: Props) {
   const qc = useQueryClient();
   const [form, setForm] = useState({
-    name: '', email: '', phone: '', title: '', tier: '3', tags: '', notes: '',
+    name: '', email: '', phone: '', linkedin: '', twitter: '', instagram: '', title: '', tier: '3', tags: '', notes: '',
   });
 
   const mutation = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.createPerson(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['people'] });
-      setForm({ name: '', email: '', phone: '', title: '', tier: '3', tags: '', notes: '' });
+      setForm({ name: '', email: '', phone: '', linkedin: '', twitter: '', instagram: '', title: '', tier: '3', tags: '', notes: '' });
       onClose();
     },
   });
@@ -30,6 +30,9 @@ export default function AddPersonForm({ open, onClose }: Props) {
       name: form.name,
       email: form.email || undefined,
       phone: form.phone || undefined,
+      linkedin: form.linkedin || undefined,
+      twitter: form.twitter || undefined,
+      instagram: form.instagram || undefined,
       title: form.title || undefined,
       tier: parseInt(form.tier),
       tags: form.tags ? form.tags.split(',').map((t: string) => t.trim()) : [],
@@ -54,6 +57,17 @@ export default function AddPersonForm({ open, onClose }: Props) {
         <FormField label="Title">
           <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="CTO at Acme" />
         </FormField>
+        <div className="grid grid-cols-3 gap-3">
+          <FormField label="LinkedIn">
+            <Input value={form.linkedin} onChange={(e) => setForm({ ...form, linkedin: e.target.value })} placeholder="linkedin.com/in/..." />
+          </FormField>
+          <FormField label="X / Twitter">
+            <Input value={form.twitter} onChange={(e) => setForm({ ...form, twitter: e.target.value })} placeholder="@handle" />
+          </FormField>
+          <FormField label="Instagram">
+            <Input value={form.instagram} onChange={(e) => setForm({ ...form, instagram: e.target.value })} placeholder="@handle" />
+          </FormField>
+        </div>
         <FormField label="Tier">
           <Select value={form.tier} onChange={(e) => setForm({ ...form, tier: e.target.value })}>
             <option value="1" className="bg-[#0a0a0f]">1 — Inner Circle</option>

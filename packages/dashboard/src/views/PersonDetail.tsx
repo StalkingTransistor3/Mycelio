@@ -50,6 +50,25 @@ export default function PersonDetail() {
             )}
             {person.email && <p className="text-sm text-white/20">{person.email}</p>}
             {person.phone && <p className="text-sm text-white/20">{person.phone}</p>}
+            {(person.linkedin || person.twitter || person.instagram) && (
+              <div className="flex gap-3 mt-2">
+                {person.linkedin && (
+                  <a href={person.linkedin.startsWith('http') ? person.linkedin : `https://${person.linkedin}`} target="_blank" rel="noopener noreferrer" className="text-xs text-neon-cyan/50 hover:text-neon-cyan transition-colors">
+                    LinkedIn
+                  </a>
+                )}
+                {person.twitter && (
+                  <a href={person.twitter.startsWith('http') ? person.twitter : `https://x.com/${person.twitter.replace('@', '')}`} target="_blank" rel="noopener noreferrer" className="text-xs text-neon-cyan/50 hover:text-neon-cyan transition-colors">
+                    X
+                  </a>
+                )}
+                {person.instagram && (
+                  <a href={person.instagram.startsWith('http') ? person.instagram : `https://instagram.com/${person.instagram.replace('@', '')}`} target="_blank" rel="noopener noreferrer" className="text-xs text-neon-cyan/50 hover:text-neon-cyan transition-colors">
+                    Instagram
+                  </a>
+                )}
+              </div>
+            )}
           </div>
           <span className={`text-sm font-mono tracking-wider ${tierGlow[person.tier]}`}>
             T{person.tier} — {tierLabels[person.tier]}

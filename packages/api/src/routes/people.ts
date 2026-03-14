@@ -34,6 +34,9 @@ export async function peopleRoutes(app: FastifyInstance) {
       name: string;
       email?: string;
       phone?: string;
+      linkedin?: string;
+      twitter?: string;
+      instagram?: string;
       title?: string;
       organizationId?: string;
       tier?: number;

@@ -23,6 +23,9 @@ export interface Person {
   name: string;
   email: string | null;
   phone: string | null;
+  linkedin: string | null;
+  twitter: string | null;
+  instagram: string | null;
   title: string | null;
   organizationId: string | null;
   tier: RelationshipTier;
@@ -96,7 +99,14 @@ export interface GraphNode {
   name: string;
   tier: RelationshipTier;
   group: string | null; // organization name
+  organizationId: string | null;
   tags: string[];
+}
+
+export interface GraphGroup {
+  id: string;
+  name: string;
+  type: string;
 }
 
 export interface GraphEdge {
@@ -109,6 +119,7 @@ export interface GraphEdge {
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  groups: GraphGroup[];
 }
 
 export interface FollowUp {

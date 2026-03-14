@@ -50,6 +50,9 @@ export async function createPerson(data: {
   name: string;
   email?: string;
   phone?: string;
+  linkedin?: string;
+  twitter?: string;
+  instagram?: string;
   title?: string;
   organizationId?: string;
   tier?: number;
@@ -62,6 +65,9 @@ export async function createPerson(data: {
       name: data.name,
       email: data.email || null,
       phone: data.phone || null,
+      linkedin: data.linkedin || null,
+      twitter: data.twitter || null,
+      instagram: data.instagram || null,
       title: data.title || null,
       organizationId: data.organizationId || null,
       tier: data.tier || 3,
@@ -76,6 +82,9 @@ export async function updatePerson(id: string, data: Partial<{
   name: string;
   email: string;
   phone: string;
+  linkedin: string;
+  twitter: string;
+  instagram: string;
   title: string;
   organizationId: string;
   tier: number;
