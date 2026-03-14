@@ -28,7 +28,7 @@ function CommunityCard({ community }: { community: Community }) {
       )}
 
       <div className="mt-3 flex gap-1 flex-wrap">
-        {community.tags.map((tag) => (
+        {community.tags.map((tag: string) => (
           <span key={tag} className="px-2 py-0.5 text-[10px] bg-neon-purple/10 text-neon-purple/60 rounded border border-neon-purple/20">
             {tag}
           </span>

@@ -47,7 +47,7 @@ export default function PersonDetail() {
 
         {person.tags.length > 0 && (
           <div className="mt-4 flex gap-2 flex-wrap">
-            {person.tags.map((tag) => (
+            {person.tags.map((tag: string) => (
               <span key={tag} className="px-2 py-1 text-xs bg-neon-cyan/10 text-neon-cyan/60 rounded border border-neon-cyan/20">
                 {tag}
               </span>

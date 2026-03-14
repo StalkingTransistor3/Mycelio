@@ -31,7 +31,7 @@ export default function EventList() {
             <div className="glow-line my-3" />
             <div className="flex items-center justify-between">
               <div className="flex gap-1 flex-wrap">
-                {event.tags.map((tag) => (
+                {event.tags.map((tag: string) => (
                   <span key={tag} className="px-2 py-0.5 text-[10px] bg-neon-magenta/10 text-neon-magenta/60 rounded border border-neon-magenta/20">
                     {tag}
                   </span>

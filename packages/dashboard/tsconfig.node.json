@@ -3,11 +3,10 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
     "strict": true,
     "composite": true,
-    "noEmit": false,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "outDir": "dist-node"
   },
   "include": ["vite.config.ts"]
 }

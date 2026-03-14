@@ -19,13 +19,13 @@ export default function GraphView() {
 
   const filteredNodes = graph
     ? tierFilter
-      ? graph.nodes.filter((n) => n.tier <= tierFilter)
+      ? graph.nodes.filter((n: GraphNode) => n.tier <= tierFilter)
       : graph.nodes
     : [];
 
-  const nodeIds = new Set(filteredNodes.map((n) => n.id));
+  const nodeIds = new Set(filteredNodes.map((n: GraphNode) => n.id));
   const filteredEdges = graph
-    ? graph.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
+    ? graph.edges.filter((e: { source: string; target: string }) => nodeIds.has(e.source) && nodeIds.has(e.target))
     : [];
 
   return (

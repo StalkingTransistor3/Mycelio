@@ -64,7 +64,7 @@ export default function PeopleList() {
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex gap-1 flex-wrap">
-                    {person.tags.map((tag) => (
+                    {person.tags.map((tag: string) => (
                       <span key={tag} className="px-2 py-0.5 text-[10px] bg-white/5 text-white/30 rounded border border-white/5">
                         {tag}
                       </span>
