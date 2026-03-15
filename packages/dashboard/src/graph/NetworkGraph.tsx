@@ -72,8 +72,16 @@ export default function NetworkGraph({
     return map;
   }, [edges]);
 
-  // Prepare graph data for force-graph
-  const graphData = useMemo(() => {
+  // Stable graph data — only rebuild when the actual node/edge arrays change identity
+  // NOT when highlight state changes (that would reset positions)
+  const graphDataRef = useRef<{ nodes: FGNode[]; links: FGLink[] }>({ nodes: [], links: [] });
+  const prevNodesRef = useRef<GraphNode[]>([]);
+  const prevEdgesRef = useRef<GraphEdge[]>([]);
+
+  if (nodes !== prevNodesRef.current || edges !== prevEdgesRef.current) {
+    prevNodesRef.current = nodes;
+    prevEdgesRef.current = edges;
+
     const fgNodes: FGNode[] = nodes.map((n) => ({
       ...n,
       __connections: connectionMap.get(n.id) || new Set(),
@@ -87,8 +95,17 @@ export default function NetworkGraph({
       context: e.context,
     }));
 
-    return { nodes: fgNodes, links: fgLinks };
-  }, [nodes, edges, connectionMap]);
+    graphDataRef.current = { nodes: fgNodes, links: fgLinks };
+  }
+
+  // Update __connections on existing nodes without replacing them
+  useEffect(() => {
+    for (const n of nodesRef.current) {
+      n.__connections = connectionMap.get(n.id) || new Set();
+    }
+  }, [connectionMap]);
+
+  const graphData = graphDataRef.current;
 
   // Pan to node
   const panToNode = useCallback((nodeId: string) => {
@@ -237,6 +254,29 @@ export default function NetworkGraph({
     onNodeClick?.(node as GraphNode);
   }, [onNodeClick]);
 
+  // Configure forces after mount to spread leaf nodes
+  const handleEngineInit = useCallback((fg: any) => {
+    // Increase charge repulsion so leaf nodes don't pile up
+    fg.d3Force('charge')?.strength((d: FGNode) => {
+      const conns = connectionMap.get(d.id)?.size || 0;
+      // Leaf nodes (1-2 connections) get stronger repulsion to spread out
+      return conns <= 2 ? -120 : -40;
+    });
+    // Increase link distance for leaf nodes
+    fg.d3Force('link')?.distance((link: any) => {
+      const srcConns = connectionMap.get(typeof link.source === 'string' ? link.source : link.source.id)?.size || 0;
+      const tgtConns = connectionMap.get(typeof link.target === 'string' ? link.target : link.target.id)?.size || 0;
+      const minConns = Math.min(srcConns, tgtConns);
+      return minConns <= 2 ? 100 : 30;
+    });
+  }, [connectionMap]);
+
+  useEffect(() => {
+    if (fgRef.current) {
+      handleEngineInit(fgRef.current);
+    }
+  }, [handleEngineInit]);
+
   return (
     <ForceGraph2D
       ref={fgRef}
@@ -253,13 +293,14 @@ export default function NetworkGraph({
       onNodeClick={handleNodeClick}
       onNodeHover={handleNodeHover}
       nodeLabel={() => ''}
-      cooldownTicks={150}
-      d3AlphaDecay={0.02}
-      d3VelocityDecay={0.3}
-      warmupTicks={50}
+      cooldownTicks={200}
+      d3AlphaDecay={0.015}
+      d3VelocityDecay={0.25}
+      warmupTicks={100}
       enableNodeDrag={true}
       enableZoomInteraction={true}
       enablePanInteraction={true}
+      onEngineStop={() => {}}
     />
   );
 }
