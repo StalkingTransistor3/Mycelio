@@ -24,9 +24,11 @@ const tierLabel: Record<number, string> = {
 };
 
 export default function GraphView() {
-  // Smart default: load tier 1-3 + limit 500 most connected
-  const { data: overviewGraph, isLoading, error } = useGraph({ tier: 3, limit: 500 });
-  const [tierFilter, setTierFilter] = useState<number | null>(null);
+  // Tier filter drives server-side fetch
+  const [tierFilter, setTierFilter] = useState<number | null>(3);
+  const graphTier = tierFilter || 5; // null = all tiers = tier 5
+  const graphLimit = graphTier <= 2 ? 200 : graphTier <= 3 ? 500 : graphTier <= 4 ? 1000 : 2000;
+  const { data: overviewGraph, isLoading, error } = useGraph({ tier: graphTier, limit: graphLimit });
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [connectedOnly, setConnectedOnly] = useState(false);
   const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
@@ -107,12 +109,8 @@ export default function GraphView() {
       .sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name));
   }, [egoNodeId, activeGraph]);
 
-  // Apply client-side filters to active graph
+  // Apply client-side filters to active graph (tier is now server-side)
   let filteredNodes = activeGraph ? [...activeGraph.nodes] : [];
-
-  if (tierFilter) {
-    filteredNodes = filteredNodes.filter((n) => n.tier <= tierFilter);
-  }
 
   if (orgFilter === '__none__') {
     filteredNodes = filteredNodes.filter((n) => !n.organizationId);
