@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
+import * as d3 from 'd3';
 import type { GraphNode, GraphEdge, GraphGroup } from '@mycelio/shared';
 
 export interface GraphAPI {
@@ -37,6 +38,13 @@ const tierColor: Record<number, string> = {
   5: '#555566',
 };
 
+const ORG_COLORS = [
+  '#ff00e5', '#00f0ff', '#39ff14', '#f0ff00', '#ff6600',
+  '#aa44ff', '#00ff99', '#ff4466', '#44aaff', '#ffaa00',
+  '#66ffcc', '#ff66aa', '#88ff44', '#ff8844', '#44ffdd',
+  '#dd44ff', '#ffdd44', '#44ddff', '#ff4488', '#88ddff',
+];
+
 interface FGNode extends GraphNode {
   x?: number;
   y?: number;
@@ -60,6 +68,24 @@ export default function NetworkGraph({
   const hoveredNodeRef = useRef<string | null>(null);
   const nodesRef = useRef<FGNode[]>([]);
 
+  // Build org color map
+  const orgColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    groups.forEach((g, i) => {
+      map.set(g.id, ORG_COLORS[i % ORG_COLORS.length]);
+    });
+    return map;
+  }, [groups]);
+
+  // Build org name map
+  const orgNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const g of groups) {
+      map.set(g.id, g.name);
+    }
+    return map;
+  }, [groups]);
+
   // Build connection lookup for highlighting
   const connectionMap = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -73,7 +99,6 @@ export default function NetworkGraph({
   }, [edges]);
 
   // Stable graph data — only rebuild when the actual node/edge arrays change identity
-  // NOT when highlight state changes (that would reset positions)
   const graphDataRef = useRef<{ nodes: FGNode[]; links: FGLink[] }>({ nodes: [], links: [] });
   const prevNodesRef = useRef<GraphNode[]>([]);
   const prevEdgesRef = useRef<GraphEdge[]>([]);
@@ -135,11 +160,110 @@ export default function NetworkGraph({
     onReady?.({ panToNode, panToOrg });
   }, [onReady, panToNode, panToOrg]);
 
+  // Draw org cluster backgrounds and labels BEFORE nodes
+  const onRenderFramePre = useCallback((ctx: CanvasRenderingContext2D, globalScale: number) => {
+    // Group nodes by org
+    const orgPositions = new Map<string, { x: number; y: number }[]>();
+    for (const n of nodesRef.current) {
+      if (n.organizationId && n.x != null && n.y != null) {
+        if (!orgPositions.has(n.organizationId)) {
+          orgPositions.set(n.organizationId, []);
+        }
+        orgPositions.get(n.organizationId)!.push({ x: n.x, y: n.y });
+      }
+    }
+
+    // Draw hulls for orgs with 2+ members
+    for (const [orgId, positions] of orgPositions) {
+      if (positions.length < 2) continue;
+
+      const color = orgColorMap.get(orgId) || '#ffffff';
+      const orgName = orgNameMap.get(orgId) || '';
+      const isHighlighted = highlightOrgId === orgId;
+
+      // Compute centroid
+      const cx = positions.reduce((s, p) => s + p.x, 0) / positions.length;
+      const cy = positions.reduce((s, p) => s + p.y, 0) / positions.length;
+
+      // Padding around hull
+      const pad = 30;
+
+      if (positions.length === 2) {
+        // Draw ellipse between two points
+        const [p1, p2] = positions;
+        const mx = (p1.x + p2.x) / 2;
+        const my = (p1.y + p2.y) / 2;
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const angle = Math.atan2(dy, dx);
+
+        ctx.save();
+        ctx.translate(mx, my);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, dist / 2 + pad, pad, 0, 0, 2 * Math.PI);
+        ctx.fillStyle = color + (isHighlighted ? '18' : '08');
+        ctx.fill();
+        ctx.strokeStyle = color + (isHighlighted ? '40' : '18');
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      } else {
+        // Expand points outward from centroid for padding
+        const expanded: [number, number][] = positions.map((p) => {
+          const dx = p.x - cx;
+          const dy = p.y - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          return [p.x + (dx / dist) * pad, p.y + (dy / dist) * pad] as [number, number];
+        });
+
+        const hull = d3.polygonHull(expanded);
+        if (hull) {
+          ctx.beginPath();
+          ctx.moveTo(hull[0][0], hull[0][1]);
+          for (let i = 1; i < hull.length; i++) {
+            ctx.lineTo(hull[i][0], hull[i][1]);
+          }
+          ctx.closePath();
+          ctx.fillStyle = color + (isHighlighted ? '18' : '08');
+          ctx.fill();
+          ctx.strokeStyle = color + (isHighlighted ? '40' : '18');
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      // Org label — always visible, scales to remain readable
+      // Font size: inversely proportional to zoom so it stays constant on screen
+      const baseFontSize = positions.length >= 5 ? 14 : positions.length >= 3 ? 12 : 10;
+      const fontSize = baseFontSize / globalScale;
+      const minFontSize = 3; // Don't render if too tiny even for canvas
+      
+      if (fontSize >= minFontSize) {
+        // Position label above the cluster
+        const minY = Math.min(...positions.map((p) => p.y));
+        const labelY = minY - pad - 5;
+
+        ctx.font = `600 ${fontSize}px 'JetBrains Mono', 'Fira Code', monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = color + (isHighlighted ? 'aa' : '70');
+        ctx.fillText(orgName, cx, labelY);
+      }
+    }
+  }, [orgColorMap, orgNameMap, highlightOrgId]);
+
   // Custom node rendering
   const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const n = node as FGNode;
     const r = tierRadius[n.tier] || 5;
-    const color = tierColor[n.tier] || '#555566';
+    const orgColor = n.organizationId ? orgColorMap.get(n.organizationId) : null;
+    const color = orgColor || tierColor[n.tier] || '#555566';
     const x = n.x ?? 0;
     const y = n.y ?? 0;
 
@@ -190,7 +314,7 @@ export default function NetworkGraph({
     ctx.lineWidth = isHighlighted || isEgoCenter ? 2 : 0.8;
     ctx.stroke();
 
-    // Label — only show at reasonable zoom or for highlighted/hovered nodes
+    // Label — show at reasonable zoom or for highlighted/hovered nodes
     const showLabel = globalScale > 1.2 || isHovered || isHighlighted || isEgoCenter || isConnectedToHovered || isConnectedToHighlight;
     if (showLabel) {
       const fontSize = Math.max(10 / globalScale, 2.5);
@@ -202,7 +326,7 @@ export default function NetworkGraph({
     }
 
     ctx.globalAlpha = 1;
-  }, [highlightNodeId, highlightOrgId, egoNodeId]);
+  }, [highlightNodeId, highlightOrgId, egoNodeId, orgColorMap]);
 
   // Custom node pointer area (for hit detection)
   const nodePointerAreaPaint = useCallback((node: any, color: string, ctx: CanvasRenderingContext2D) => {
@@ -227,23 +351,32 @@ export default function NetworkGraph({
       (hovered && (src.id === hovered || tgt.id === hovered)) ||
       (highlighted && (src.id === highlighted || tgt.id === highlighted));
 
+    // Same-org edges get org color tint
+    const sameOrg = src.organizationId && src.organizationId === tgt.organizationId;
+    const orgColor = sameOrg ? orgColorMap.get(src.organizationId!) : null;
+
     let alpha = 0.08;
     let lineWidth = 0.5;
+    let strokeColor = orgColor ? orgColor : 'rgb(0, 240, 255)';
 
     if (isConnectedToActive) {
       alpha = 0.6;
       lineWidth = link.strength === 'strong' ? 2 : link.strength === 'medium' ? 1.2 : 0.8;
     } else if (hovered || highlighted) {
       alpha = 0.03;
+    } else if (sameOrg) {
+      alpha = 0.15; // Intra-org edges slightly more visible
     }
 
     ctx.beginPath();
     ctx.moveTo(src.x, src.y);
     ctx.lineTo(tgt.x, tgt.y);
-    ctx.strokeStyle = `rgba(0, 240, 255, ${alpha})`;
+    ctx.strokeStyle = strokeColor;
+    ctx.globalAlpha = alpha;
     ctx.lineWidth = lineWidth;
     ctx.stroke();
-  }, [highlightNodeId]);
+    ctx.globalAlpha = 1;
+  }, [highlightNodeId, orgColorMap]);
 
   const handleNodeHover = useCallback((node: any) => {
     hoveredNodeRef.current = node ? (node as FGNode).id : null;
@@ -254,20 +387,27 @@ export default function NetworkGraph({
     onNodeClick?.(node as GraphNode);
   }, [onNodeClick]);
 
-  // Configure forces after mount to spread leaf nodes
+  // Configure forces after mount to spread leaf nodes and cluster orgs
   const handleEngineInit = useCallback((fg: any) => {
-    // Increase charge repulsion so leaf nodes don't pile up
+    // Charge: leaf nodes repel more, hub nodes less
     fg.d3Force('charge')?.strength((d: FGNode) => {
       const conns = connectionMap.get(d.id)?.size || 0;
-      // Leaf nodes (1-2 connections) get stronger repulsion to spread out
       return conns <= 2 ? -120 : -40;
     });
-    // Increase link distance for leaf nodes
+    // Links: leaf nodes get longer links, intra-org links are shorter (pulls org members together)
     fg.d3Force('link')?.distance((link: any) => {
-      const srcConns = connectionMap.get(typeof link.source === 'string' ? link.source : link.source.id)?.size || 0;
-      const tgtConns = connectionMap.get(typeof link.target === 'string' ? link.target : link.target.id)?.size || 0;
+      const src = typeof link.source === 'string' ? link.source : link.source.id;
+      const tgt = typeof link.target === 'string' ? link.target : link.target.id;
+      const srcNode = nodesRef.current.find(n => n.id === src);
+      const tgtNode = nodesRef.current.find(n => n.id === tgt);
+      const srcConns = connectionMap.get(src)?.size || 0;
+      const tgtConns = connectionMap.get(tgt)?.size || 0;
       const minConns = Math.min(srcConns, tgtConns);
-      return minConns <= 2 ? 100 : 30;
+      // Same org = tight cluster
+      if (srcNode?.organizationId && srcNode.organizationId === tgtNode?.organizationId) {
+        return 20;
+      }
+      return minConns <= 2 ? 100 : 40;
     });
   }, [connectionMap]);
 
@@ -292,6 +432,7 @@ export default function NetworkGraph({
       linkCanvasObject={linkCanvasObject}
       onNodeClick={handleNodeClick}
       onNodeHover={handleNodeHover}
+      onRenderFramePre={onRenderFramePre}
       nodeLabel={() => ''}
       cooldownTicks={200}
       d3AlphaDecay={0.015}
