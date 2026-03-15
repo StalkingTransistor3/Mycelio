@@ -396,22 +396,14 @@ export default function NetworkGraph({
     ctx.stroke();
   }, [highlightNodeId, showEdges]);
 
-  // Hover — freeze simulation on hover so nodes stop moving (but not when globally frozen)
+  // Hover — just update ref and notify parent. No animation pausing needed.
   const handleNodeHover = useCallback((node: any) => {
     const id = node ? (node as FGNode).id : null;
     if (hoveredNodeRef.current !== id) {
       hoveredNodeRef.current = id;
-      const fg = fgRef.current;
-      if (fg && !frozen) {
-        if (node) {
-          fg.pauseAnimation();
-        } else {
-          fg.resumeAnimation();
-        }
-      }
       onNodeHover?.(node as GraphNode | null);
     }
-  }, [onNodeHover, frozen]);
+  }, [onNodeHover]);
 
   const handleNodeClick = useCallback((node: any) => {
     onNodeClick?.(node as GraphNode);
@@ -482,19 +474,44 @@ export default function NetworkGraph({
     fg.d3ReheatSimulation();
   }, [simParams, connectionMap, nodeIdMap]);
 
-  // Handle freeze/unfreeze
+  // Handle freeze/unfreeze — stop simulation forces but keep canvas interactive
   const frozenRef = useRef(false);
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
     if (frozen && !frozenRef.current) {
-      fg.pauseAnimation();
+      // Stop the d3 simulation but DON'T pause the animation/render loop
+      // This keeps zoom, pan, click, hover all working
+      fg.d3Force('charge', null);
+      fg.d3Force('link', null);
+      fg.d3Force('center', null);
+      fg.d3Force('collide', null);
+      // Kill all node velocities so they stop drifting
+      const nodes = fg.graphData()?.nodes || [];
+      for (const n of nodes) {
+        (n as any).vx = 0;
+        (n as any).vy = 0;
+        (n as any).fx = (n as any).x;
+        (n as any).fy = (n as any).y;
+      }
       frozenRef.current = true;
     } else if (!frozen && frozenRef.current) {
-      fg.resumeAnimation();
+      // Restore forces — unpin all nodes
+      const nodes = fg.graphData()?.nodes || [];
+      for (const n of nodes) {
+        (n as any).fx = undefined;
+        (n as any).fy = undefined;
+      }
+      // Re-apply forces
+      handleEngineInit(fg);
+      if (simParams) {
+        // Re-apply simParams too
+        fg.d3Force('collide', d3.forceCollide(simParams.collisionRadius));
+      }
+      fg.d3ReheatSimulation();
       frozenRef.current = false;
     }
-  }, [frozen]);
+  }, [frozen, handleEngineInit, simParams]);
 
   return (
     <ForceGraph2D
