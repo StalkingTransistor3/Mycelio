@@ -13,6 +13,7 @@ export default function GraphView() {
   const { data: graph, isLoading, error } = useGraph();
   const [tierFilter, setTierFilter] = useState<number | null>(null);
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
+  const [connectedOnly, setConnectedOnly] = useState(false);
   const [simParams, setSimParams] = useState<SimParams>({ ...DEFAULT_SIM_PARAMS });
   const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
   const [highlightOrgId, setHighlightOrgId] = useState<string | null>(null);
@@ -55,10 +56,20 @@ export default function GraphView() {
     filteredNodes = filteredNodes.filter((n) => n.organizationId === orgFilter);
   }
 
-  const nodeIds = new Set(filteredNodes.map((n) => n.id));
+  let nodeIds = new Set(filteredNodes.map((n) => n.id));
   const filteredEdges = graph
     ? graph.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
     : [];
+
+  if (connectedOnly) {
+    const connectedIds = new Set<string>();
+    for (const e of filteredEdges) {
+      connectedIds.add(e.source);
+      connectedIds.add(e.target);
+    }
+    filteredNodes = filteredNodes.filter((n) => connectedIds.has(n.id));
+    nodeIds = new Set(filteredNodes.map((n) => n.id));
+  }
 
   const groups = graph?.groups ?? [];
 
@@ -80,6 +91,8 @@ export default function GraphView() {
           groups={groups}
           orgFilter={orgFilter}
           onOrgChange={setOrgFilter}
+          connectedOnly={connectedOnly}
+          onConnectedOnlyChange={setConnectedOnly}
         />
         <GraphSimControls params={simParams} onChange={setSimParams} />
         <div className="ml-auto">

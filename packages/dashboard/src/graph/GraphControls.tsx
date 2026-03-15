@@ -6,6 +6,8 @@ interface Props {
   groups: GraphGroup[];
   orgFilter: string | null;
   onOrgChange: (orgId: string | null) => void;
+  connectedOnly: boolean;
+  onConnectedOnlyChange: (value: boolean) => void;
 }
 
 const tiers = [
@@ -17,7 +19,7 @@ const tiers = [
   { value: 5, label: 'T5 — Acquaintance' },
 ];
 
-export default function GraphControls({ tierFilter, onTierChange, groups, orgFilter, onOrgChange }: Props) {
+export default function GraphControls({ tierFilter, onTierChange, groups, orgFilter, onOrgChange, connectedOnly, onConnectedOnlyChange }: Props) {
   const sortedGroups = [...groups].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
@@ -48,6 +50,16 @@ export default function GraphControls({ tierFilter, onTierChange, groups, orgFil
           </option>
         ))}
       </select>
+
+      <label className="flex items-center gap-1.5 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={connectedOnly}
+          onChange={(e) => onConnectedOnlyChange(e.target.checked)}
+          className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 accent-[#00f0ff] cursor-pointer"
+        />
+        <span className="text-xs text-white/50 font-mono">Connected only</span>
+      </label>
     </div>
   );
 }
