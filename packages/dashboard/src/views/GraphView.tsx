@@ -5,6 +5,9 @@ import NetworkGraph from '../graph/NetworkGraph.js';
 import type { GraphAPI } from '../graph/NetworkGraph.js';
 import GraphControls from '../graph/GraphControls.js';
 import GraphSearch from '../graph/GraphSearch.js';
+import GraphSimControls from '../graph/GraphSimControls.js';
+import { DEFAULT_SIM_PARAMS } from '../graph/GraphSimControls.js';
+import type { SimParams } from '../graph/GraphSimControls.js';
 import type { GraphNode } from '@mycelio/shared';
 
 const tierColor: Record<number, string> = {
@@ -40,12 +43,22 @@ export default function GraphView() {
   const [egoDepth, setEgoDepth] = useState(1);
   const { data: egoGraph } = useEgoGraph(egoNodeId, egoDepth);
 
+  // Sim controls state
+  const [simParams, setSimParams] = useState<SimParams>({ ...DEFAULT_SIM_PARAMS });
+  const [frozen, setFrozen] = useState(false);
+
+  // Display toggles
+  const [showLabels, setShowLabels] = useState(false);
+  const [showEdges, setShowEdges] = useState(true);
+  const [showHulls, setShowHulls] = useState(true);
+
+  // New filter states
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [minConnections, setMinConnections] = useState(0);
+
   const graphApiRef = useRef<GraphAPI | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-
-  // Tooltip state
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -109,6 +122,17 @@ export default function GraphView() {
       .sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name));
   }, [egoNodeId, activeGraph]);
 
+  // Build connection count map for filtering
+  const connectionCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!activeGraph) return map;
+    for (const e of activeGraph.edges) {
+      map.set(e.source, (map.get(e.source) || 0) + 1);
+      map.set(e.target, (map.get(e.target) || 0) + 1);
+    }
+    return map;
+  }, [activeGraph]);
+
   // Apply client-side filters to active graph (tier is now server-side)
   let filteredNodes = activeGraph ? [...activeGraph.nodes] : [];
 
@@ -116,6 +140,17 @@ export default function GraphView() {
     filteredNodes = filteredNodes.filter((n) => !n.organizationId);
   } else if (orgFilter) {
     filteredNodes = filteredNodes.filter((n) => n.organizationId === orgFilter);
+  }
+
+  // Tag filter: show nodes that have ANY of the selected tags
+  if (selectedTags.length > 0) {
+    const tagSet = new Set(selectedTags);
+    filteredNodes = filteredNodes.filter((n) => n.tags.some((t) => tagSet.has(t)));
+  }
+
+  // Min connections filter
+  if (minConnections > 0) {
+    filteredNodes = filteredNodes.filter((n) => (connectionCountMap.get(n.id) || 0) >= minConnections);
   }
 
   let nodeIds = new Set(filteredNodes.map((n) => n.id));
@@ -135,6 +170,9 @@ export default function GraphView() {
 
   const groups = activeGraph?.groups ?? [];
 
+  // All nodes for tag extraction (before filters)
+  const allNodes = activeGraph?.nodes ?? [];
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
@@ -147,10 +185,16 @@ export default function GraphView() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          <GraphSimControls
+            params={simParams}
+            onChange={setSimParams}
+            frozen={frozen}
+            onFrozenChange={setFrozen}
+          />
           {isEgoMode && (
             <button
               onClick={exitEgoMode}
-              className="px-3 py-1.5 text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-white/60 hover:text-white/90 hover:border-neon-cyan/40 transition-all"
+              className="px-3 py-1.5 text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-white/60 hover:text-white/90 hover:border-[#00f0ff]/40 transition-all"
             >
               Back to Overview
             </button>
@@ -172,6 +216,17 @@ export default function GraphView() {
           onOrgChange={setOrgFilter}
           connectedOnly={connectedOnly}
           onConnectedOnlyChange={setConnectedOnly}
+          nodes={allNodes}
+          selectedTags={selectedTags}
+          onSelectedTagsChange={setSelectedTags}
+          minConnections={minConnections}
+          onMinConnectionsChange={setMinConnections}
+          showLabels={showLabels}
+          onShowLabelsChange={setShowLabels}
+          showEdges={showEdges}
+          onShowEdgesChange={setShowEdges}
+          showHulls={showHulls}
+          onShowHullsChange={setShowHulls}
         />
         {isEgoMode && (
           <div className="flex items-center gap-2">
@@ -179,7 +234,7 @@ export default function GraphView() {
             <select
               value={egoDepth}
               onChange={(e) => setEgoDepth(parseInt(e.target.value))}
-              className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white/70 outline-none focus:border-neon-cyan/50 transition-all appearance-none cursor-pointer"
+              className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white/70 outline-none focus:border-[#00f0ff]/50 transition-all appearance-none cursor-pointer"
             >
               <option value={1} className="bg-[#0a0a0f]">1 hop</option>
               <option value={2} className="bg-[#0a0a0f]">2 hops</option>
@@ -220,6 +275,12 @@ export default function GraphView() {
               highlightOrgId={highlightOrgId}
               egoNodeId={egoNodeId}
               onReady={handleGraphReady}
+              simParams={simParams}
+              frozen={frozen}
+              showLabels={showLabels}
+              showEdges={showEdges}
+              showHulls={showHulls}
+              onFrozenChange={setFrozen}
             />
           ) : (
             !isLoading && (
@@ -287,7 +348,7 @@ export default function GraphView() {
               </div>
               <Link
                 to={`/people/${egoNode.id}`}
-                className="mt-3 block w-full px-3 py-1.5 text-center text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-neon-cyan/80 hover:text-neon-cyan hover:border-neon-cyan/40 transition-all"
+                className="mt-3 block w-full px-3 py-1.5 text-center text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-[#00f0ff]/80 hover:text-[#00f0ff] hover:border-[#00f0ff]/40 transition-all"
               >
                 View Full Profile
               </Link>

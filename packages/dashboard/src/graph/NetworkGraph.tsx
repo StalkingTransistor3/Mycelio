@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useMemo } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import * as d3 from 'd3';
 import type { GraphNode, GraphEdge, GraphGroup } from '@mycelio/shared';
+import type { SimParams } from './GraphSimControls.js';
 
 export interface GraphAPI {
   panToNode: (nodeId: string) => void;
@@ -20,6 +21,12 @@ interface Props {
   highlightOrgId?: string | null;
   egoNodeId?: string | null;
   onReady?: (api: GraphAPI) => void;
+  simParams?: SimParams;
+  frozen?: boolean;
+  showLabels?: boolean;
+  showEdges?: boolean;
+  showHulls?: boolean;
+  onFrozenChange?: (frozen: boolean) => void;
 }
 
 const tierRadius: Record<number, number> = { 1: 8, 2: 6.5, 3: 5, 4: 4, 5: 3 };
@@ -80,6 +87,7 @@ interface OrgHullCache {
 export default function NetworkGraph({
   nodes, edges, groups, width, height, onNodeClick, onNodeHover,
   highlightNodeId, highlightOrgId, egoNodeId, onReady,
+  simParams, frozen, showLabels, showEdges, showHulls, onFrozenChange,
 }: Props) {
   const fgRef = useRef<any>(null);
   const hoveredNodeRef = useRef<string | null>(null);
@@ -224,6 +232,9 @@ export default function NetworkGraph({
 
   // Draw org backgrounds from cache
   const onRenderFramePre = useCallback((ctx: CanvasRenderingContext2D, globalScale: number) => {
+    // Skip hull drawing if showHulls is false
+    if (showHulls === false) return;
+
     // Rebuild hull cache every 30 frames
     hullFrameCounter.current++;
     if (hullFrameCounter.current % 30 === 0 || hullCacheRef.current.length === 0) {
@@ -280,7 +291,7 @@ export default function NetworkGraph({
         ctx.fillText(h.name, h.cx, h.minY);
       }
     }
-  }, [rebuildHullCache, highlightOrgId]);
+  }, [rebuildHullCache, highlightOrgId, showHulls]);
 
   // Node rendering — NO shadowBlur (that was the perf killer)
   const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -327,7 +338,7 @@ export default function NetworkGraph({
     ctx.stroke();
 
     // Label
-    const showLabel = globalScale > 1.2 || isHovered || isHighlighted || isEgoCenter || isConnectedToHovered || isConnectedToHighlight;
+    const showLabel = showLabels || globalScale > 1.2 || isHovered || isHighlighted || isEgoCenter || isConnectedToHovered || isConnectedToHighlight;
     if (showLabel) {
       const fontSize = Math.max(10 / globalScale, 2.5);
       ctx.font = `${fontSize}px 'JetBrains Mono', 'Fira Code', monospace`;
@@ -338,7 +349,7 @@ export default function NetworkGraph({
     }
 
     ctx.globalAlpha = 1;
-  }, [highlightNodeId, highlightOrgId, egoNodeId]);
+  }, [highlightNodeId, highlightOrgId, egoNodeId, showLabels]);
 
   const nodePointerAreaPaint = useCallback((node: any, color: string, ctx: CanvasRenderingContext2D) => {
     const n = node as FGNode;
@@ -350,6 +361,7 @@ export default function NetworkGraph({
 
   // Link rendering — simplified, no per-link Map lookups for org color
   const linkCanvasObject = useCallback((link: any, ctx: CanvasRenderingContext2D) => {
+    if (showEdges === false) return;
     const src = link.source as FGNode;
     const tgt = link.target as FGNode;
     if (src.x == null || tgt.x == null) return;
@@ -382,26 +394,24 @@ export default function NetworkGraph({
     ctx.strokeStyle = `rgba(0,240,255,${alpha})`;
     ctx.lineWidth = lw;
     ctx.stroke();
-  }, [highlightNodeId]);
+  }, [highlightNodeId, showEdges]);
 
-  // Hover — freeze simulation on hover so nodes stop moving
+  // Hover — freeze simulation on hover so nodes stop moving (but not when globally frozen)
   const handleNodeHover = useCallback((node: any) => {
     const id = node ? (node as FGNode).id : null;
     if (hoveredNodeRef.current !== id) {
       hoveredNodeRef.current = id;
       const fg = fgRef.current;
-      if (fg) {
+      if (fg && !frozen) {
         if (node) {
-          // Freeze: kill all velocity and stop simulation
           fg.pauseAnimation();
         } else {
-          // Unfreeze when mouse leaves node
           fg.resumeAnimation();
         }
       }
       onNodeHover?.(node as GraphNode | null);
     }
-  }, [onNodeHover]);
+  }, [onNodeHover, frozen]);
 
   const handleNodeClick = useCallback((node: any) => {
     onNodeClick?.(node as GraphNode);
@@ -431,6 +441,60 @@ export default function NetworkGraph({
   }, [connectionMap, nodeIdMap]);
 
   useEffect(() => { if (fgRef.current) handleEngineInit(fgRef.current); }, [handleEngineInit]);
+
+  // Apply simParams to forces when they change
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg || !simParams) return;
+
+    const charge = fg.d3Force('charge');
+    if (charge) {
+      charge.strength((d: FGNode) => {
+        const conns = connectionMap.get(d.id)?.size || 0;
+        // Scale base charge by the simParams.charge ratio vs default -80
+        const scale = simParams.charge / -80;
+        return (conns <= 2 ? -120 : -40) * scale;
+      });
+    }
+
+    const link = fg.d3Force('link');
+    if (link) {
+      link.distance((l: any) => {
+        const srcId = typeof l.source === 'string' ? l.source : l.source.id;
+        const tgtId = typeof l.target === 'string' ? l.target : l.target.id;
+        const srcNode = nodeIdMap.get(srcId);
+        const tgtNode = nodeIdMap.get(tgtId);
+        if (srcNode?.organizationId && srcNode.organizationId === tgtNode?.organizationId) {
+          return simParams.clusterTightness;
+        }
+        const minConns = Math.min(connectionMap.get(srcId)?.size || 0, connectionMap.get(tgtId)?.size || 0);
+        return minConns <= 2 ? simParams.linkDistance * 2.5 : simParams.linkDistance;
+      });
+    }
+
+    const collide = fg.d3Force('collide');
+    if (collide) {
+      collide.radius(simParams.collisionRadius);
+    } else {
+      fg.d3Force('collide', d3.forceCollide(simParams.collisionRadius));
+    }
+
+    fg.d3ReheatSimulation();
+  }, [simParams, connectionMap, nodeIdMap]);
+
+  // Handle freeze/unfreeze
+  const frozenRef = useRef(false);
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    if (frozen && !frozenRef.current) {
+      fg.pauseAnimation();
+      frozenRef.current = true;
+    } else if (!frozen && frozenRef.current) {
+      fg.resumeAnimation();
+      frozenRef.current = false;
+    }
+  }, [frozen]);
 
   return (
     <ForceGraph2D
