@@ -1,21 +1,19 @@
 import { asc, desc, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getUpcomingMilestones } from './people.js';
-import { getPersonSentimentTrajectory } from './interactions.js';
 import type { FollowUp } from '@mycelio/shared';
 
-const { people } = schema;
+const { people, interactions } = schema;
 
 export async function getFollowUps(options?: { includeSnoozed?: boolean; limit?: number }): Promise<FollowUp[]> {
   const now = new Date();
 
-  const allPeople = await db
-    .select()
-    .from(people)
-    .orderBy(asc(people.nextFollowUpAt));
+  // Run people query and milestones query in parallel
+  const [allPeople, upcoming] = await Promise.all([
+    db.select().from(people).orderBy(asc(people.nextFollowUpAt)),
+    getUpcomingMilestones(7),
+  ]);
 
-  // Get upcoming milestones for next 7 days
-  const upcoming = await getUpcomingMilestones(7);
   const milestoneMap = new Map<string, { type: string; description: string; daysUntil: number }>();
   for (const m of upcoming) {
     if (!milestoneMap.has(m.personId)) {
@@ -24,6 +22,34 @@ export async function getFollowUps(options?: { includeSnoozed?: boolean; limit?:
         description: m.milestone.description as string,
         daysUntil: m.daysUntil,
       });
+    }
+  }
+
+  // Batch cooling detection: single query to get recent sentiment data
+  // Uses a window function to rank interactions per person, then filters to top 3
+  const recentSentiments = await db.execute(sql`
+    SELECT person_id, sentiment FROM (
+      SELECT person_id, sentiment,
+        ROW_NUMBER() OVER (PARTITION BY person_id ORDER BY occurred_at DESC) as rn
+      FROM ${interactions}
+      WHERE sentiment IS NOT NULL
+    ) ranked
+    WHERE rn <= 3
+  `);
+
+  // Build cooling alert map: personId -> boolean
+  const sentimentByPerson = new Map<string, string[]>();
+  for (const row of recentSentiments.rows as Array<{ person_id: string; sentiment: string }>) {
+    const existing = sentimentByPerson.get(row.person_id) || [];
+    existing.push(row.sentiment);
+    sentimentByPerson.set(row.person_id, existing);
+  }
+  const coolingSet = new Set<string>();
+  for (const [personId, sentiments] of sentimentByPerson) {
+    if (sentiments.length >= 2) {
+      const neg = sentiments.filter(s => s === 'negative').length;
+      const pos = sentiments.filter(s => s === 'positive').length;
+      if (neg > pos) coolingSet.add(personId);
     }
   }
 
@@ -51,19 +77,7 @@ export async function getFollowUps(options?: { includeSnoozed?: boolean; limit?:
       ? p.nextFollowUpAt <= now
       : daysSinceContact !== null && daysSinceContact > threshold;
 
-    // Detect sentiment cooling: check if last 3 interactions trend negative
-    let coolingAlert = false;
-    try {
-      const trajectory = await getPersonSentimentTrajectory(p.id, 3);
-      if (trajectory.length >= 2) {
-        const negativeCount = trajectory.filter(t => t.sentiment === 'negative').length;
-        const positiveCount = trajectory.filter(t => t.sentiment === 'positive').length;
-        coolingAlert = negativeCount > positiveCount;
-      }
-    } catch {
-      // Ignore sentiment errors
-    }
-
+    const coolingAlert = coolingSet.has(p.id);
     const upcomingMilestone = milestoneMap.get(p.id) || null;
 
     // Generate suggested action
