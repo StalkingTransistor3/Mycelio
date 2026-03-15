@@ -113,4 +113,23 @@ export const api = {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
     return request<{ data: unknown[] }>(`/follow-ups${qs}`);
   },
+
+  // Campaigns
+  getCampaigns: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<{ data: unknown[] }>(`/campaigns${qs}`);
+  },
+  getCampaign: (id: string) => request<{ data: unknown }>(`/campaigns/${id}`),
+  createCampaign: (data: unknown) => request<{ data: unknown }>('/campaigns', { method: 'POST', body: JSON.stringify(data) }),
+  updateCampaign: (id: string, data: unknown) => request<{ data: unknown }>(`/campaigns/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCampaign: (id: string) => request<{ data: unknown }>(`/campaigns/${id}`, { method: 'DELETE' }),
+  getCampaignMembers: (id: string, params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<{ data: unknown[] }>(`/campaigns/${id}/members${qs}`);
+  },
+  addCampaignMember: (campaignId: string, data: unknown) => request<{ data: unknown }>(`/campaigns/${campaignId}/members`, { method: 'POST', body: JSON.stringify(data) }),
+  addBulkCampaignMembers: (campaignId: string, personIds: string[]) => request<{ data: unknown }>(`/campaigns/${campaignId}/members/bulk`, { method: 'POST', body: JSON.stringify({ personIds }) }),
+  updateCampaignMember: (campaignId: string, memberId: string, data: unknown) => request<{ data: unknown }>(`/campaigns/${campaignId}/members/${memberId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  removeCampaignMember: (campaignId: string, memberId: string) => request<{ data: unknown }>(`/campaigns/${campaignId}/members/${memberId}`, { method: 'DELETE' }),
+  getCampaignStats: (id: string) => request<{ data: unknown }>(`/campaigns/${id}/stats`),
 };

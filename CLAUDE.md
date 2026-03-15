@@ -10,7 +10,7 @@ You are working on Mycelio, a relationship intelligence platform. Use the MCP to
 
 ## Key Files
 
-- `packages/api/src/db/schema.ts` — database schema (6 tables)
+- `packages/api/src/db/schema.ts` — database schema (8 tables)
 - `packages/api/src/mcp/tools.ts` — MCP tool definitions
 - `packages/api/src/services/` — business logic
 - `packages/api/src/routes/` — HTTP route handlers
@@ -29,6 +29,11 @@ Use these tools to manage the relationship network:
 - **add_org** — Add an organization to the network.
 - **find_connections** — Find how two people are connected through the network.
 - **follow_ups** — See who needs follow-up, sorted by urgency based on tier thresholds.
+- **create_campaign** — Create a new campaign for targeted outreach.
+- **query_campaigns** — Search and filter campaigns by name, status, type, or tags.
+- **add_campaign_members** — Add people to a campaign by name or ID.
+- **update_campaign_member** — Update a member's status, warmth, priority, notes, or next action within a campaign.
+- **campaign_report** — Get campaign stats, member breakdown, overdue actions, and high-warmth unconverted leads.
 
 ## Conventions
 

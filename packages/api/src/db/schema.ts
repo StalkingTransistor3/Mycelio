@@ -103,6 +103,39 @@ export const events = pgTable('events', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── Campaigns ──
+export const campaigns = pgTable('campaigns', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  goal: text('goal'),
+  status: varchar('status', { length: 30 }).notNull().default('draft'),
+  type: varchar('type', { length: 50 }).notNull().default('outreach'),
+  tags: jsonb('tags').$type<string[]>().notNull().default([]),
+  organizationIds: jsonb('organization_ids').$type<string[]>().notNull().default([]),
+  eventIds: jsonb('event_ids').$type<string[]>().notNull().default([]),
+  startDate: timestamp('start_date', { withTimezone: true }),
+  endDate: timestamp('end_date', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── Campaign Members (junction) ──
+export const campaignMembers = pgTable('campaign_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  campaignId: uuid('campaign_id').notNull().references(() => campaigns.id, { onDelete: 'cascade' }),
+  personId: uuid('person_id').notNull().references(() => people.id, { onDelete: 'cascade' }),
+  status: varchar('status', { length: 30 }).notNull().default('not_started'),
+  priority: integer('priority').notNull().default(0),
+  warmth: integer('warmth'),
+  notes: text('notes'),
+  lastOutreachAt: timestamp('last_outreach_at', { withTimezone: true }),
+  nextActionAt: timestamp('next_action_at', { withTimezone: true }),
+  nextAction: text('next_action'),
+  addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Connections (relationship graph edges) ──
 export const connections = pgTable('connections', {
   id: uuid('id').primaryKey().defaultRandom(),

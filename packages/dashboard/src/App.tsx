@@ -10,6 +10,8 @@ import OrganizationDetail from './views/OrganizationDetail.js';
 import FollowUps from './views/FollowUps.js';
 import PipelineView from './views/PipelineView.js';
 import VenueList from './views/VenueList.js';
+import CampaignList from './views/CampaignList.js';
+import CampaignDetail from './views/CampaignDetail.js';
 import GraphView from './views/GraphView.js';
 
 export default function App() {
@@ -25,6 +27,8 @@ export default function App() {
         <Route path="/organisations/:id" element={<OrganizationDetail />} />
         <Route path="/follow-ups" element={<FollowUps />} />
         <Route path="/pipeline" element={<PipelineView />} />
+        <Route path="/campaigns" element={<CampaignList />} />
+        <Route path="/campaigns/:id" element={<CampaignDetail />} />
         <Route path="/venues" element={<VenueList />} />
         <Route path="/graph" element={<GraphView />} />
       </Route>

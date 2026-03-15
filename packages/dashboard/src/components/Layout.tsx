@@ -7,6 +7,7 @@ const navItems = [
   { to: '/organisations', label: 'Organisations', icon: '⬢' },
   { to: '/follow-ups', label: 'Follow-ups', icon: '◉' },
   { to: '/pipeline', label: 'Pipeline', icon: '▸' },
+  { to: '/campaigns', label: 'Campaigns', icon: '⬟' },
   { to: '/venues', label: 'Venues', icon: '⌂' },
   { to: '/graph', label: 'Network', icon: '◇' },
 ];

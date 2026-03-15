@@ -12,6 +12,7 @@ import { computeReciprocityIndex } from '../services/reciprocity.js';
 import { transitionStage, getPipeline, suggestStage } from '../services/stages.js';
 import { computeInfluenceScores, detectMicroCommunities, findWarmPath, getSocialContext } from '../services/graph-analytics.js';
 import { analyzeCommPatterns, detectAvailability, getSmartReengagement } from '../services/intelligence.js';
+import { searchCampaigns, createCampaign, getCampaignMembers, getCampaignWithStats, addBulkCampaignMembers, updateCampaignMember, addCampaignMember } from '../services/campaigns.js';
 
 // Helper: resolve a person name to an ID, creating if needed
 async function resolvePersonId(name: string): Promise<string> {
@@ -26,6 +27,15 @@ async function resolveEventId(name: string): Promise<string | null> {
   const allEvents = await getEvents(500);
   const match = allEvents.find(e =>
     e.name.toLowerCase().includes(name.toLowerCase())
+  );
+  return match?.id || null;
+}
+
+// Helper: resolve a campaign name to an ID
+async function resolveCampaignId(name: string): Promise<string | null> {
+  const allCampaigns = await searchCampaigns({ limit: 500 });
+  const match = allCampaigns.find(c =>
+    c.name.toLowerCase().includes(name.toLowerCase())
   );
   return match?.id || null;
 }
@@ -1064,6 +1074,226 @@ export const tools: ToolDefinition[] = [
       const result = await getSmartReengagement(personId);
       if (!result) return { error: 'Person not found' };
       return result;
+    },
+  },
+
+  // 32. create_campaign
+  {
+    name: 'create_campaign',
+    description: 'Create a new campaign for targeted outreach. Campaigns group people for organized follow-up and tracking.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Campaign name' },
+        description: { type: 'string', description: 'What this campaign is about' },
+        goal: { type: 'string', description: 'Success criteria for the campaign' },
+        type: { type: 'string', enum: ['outreach', 'nurture', 'event', 'recruitment', 'other'], description: 'Campaign type' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags for categorization' },
+        startDate: { type: 'string', description: 'ISO date for campaign start' },
+        endDate: { type: 'string', description: 'ISO date for campaign end' },
+      },
+      required: ['name'],
+    },
+    handler: async (args) => {
+      const campaign = await createCampaign({
+        name: args.name as string,
+        description: args.description as string | undefined,
+        goal: args.goal as string | undefined,
+        type: args.type as string | undefined,
+        tags: args.tags as string[] | undefined,
+        startDate: args.startDate ? new Date(args.startDate as string) : undefined,
+        endDate: args.endDate ? new Date(args.endDate as string) : undefined,
+      });
+      return { success: true, campaign };
+    },
+  },
+
+  // 33. query_campaigns
+  {
+    name: 'query_campaigns',
+    description: 'Search and filter campaigns by name, status, type, or tags. Returns campaigns with stats (member count, contacted %, conversion rate).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search by campaign name' },
+        status: { type: 'string', enum: ['draft', 'active', 'paused', 'completed', 'archived'], description: 'Filter by status' },
+        type: { type: 'string', enum: ['outreach', 'nurture', 'event', 'recruitment', 'other'], description: 'Filter by type' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
+        limit: { type: 'number', description: 'Max results' },
+      },
+    },
+    handler: async (args) => {
+      const campaigns = await searchCampaigns({
+        query: args.query as string | undefined,
+        status: args.status as any,
+        type: args.type as any,
+        tags: args.tags as string[] | undefined,
+        limit: args.limit as number | undefined,
+      });
+      // Enrich with stats
+      const enriched = [];
+      for (const c of campaigns) {
+        const withStats = await getCampaignWithStats(c.id);
+        if (withStats) enriched.push(withStats);
+      }
+      return { campaigns: enriched, count: enriched.length };
+    },
+  },
+
+  // 34. add_campaign_members
+  {
+    name: 'add_campaign_members',
+    description: 'Add one or more people to a campaign. Can reference campaign and people by name or ID. Creates person if not found.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        campaignId: { type: 'string', description: 'Campaign UUID' },
+        campaignName: { type: 'string', description: 'Campaign name (will search for match)' },
+        personNames: { type: 'array', items: { type: 'string' }, description: 'Names of people to add' },
+        personIds: { type: 'array', items: { type: 'string' }, description: 'UUIDs of people to add' },
+      },
+    },
+    handler: async (args) => {
+      let campaignId = args.campaignId as string | undefined;
+      if (!campaignId && args.campaignName) {
+        campaignId = await resolveCampaignId(args.campaignName as string) || undefined;
+        if (!campaignId) return { error: `Campaign "${args.campaignName}" not found` };
+      }
+      if (!campaignId) return { error: 'Either campaignId or campaignName is required' };
+
+      const resolvedIds: string[] = [...((args.personIds as string[]) || [])];
+      if (args.personNames) {
+        for (const name of args.personNames as string[]) {
+          const pid = await resolvePersonId(name);
+          resolvedIds.push(pid);
+        }
+      }
+
+      if (resolvedIds.length === 0) return { error: 'No people specified' };
+
+      const result = await addBulkCampaignMembers(campaignId, resolvedIds);
+      return { success: true, ...result };
+    },
+  },
+
+  // 35. update_campaign_member
+  {
+    name: 'update_campaign_member',
+    description: 'Update a campaign member\'s status, priority, warmth, notes, or next action. Use this to track outreach progress within a campaign.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        campaignId: { type: 'string', description: 'Campaign UUID' },
+        campaignName: { type: 'string', description: 'Campaign name (will search for match)' },
+        personId: { type: 'string', description: 'Person UUID' },
+        personName: { type: 'string', description: 'Person name (will search for match)' },
+        status: { type: 'string', enum: ['not_started', 'contacted', 'interested', 'not_interested', 'converted', 'deferred'], description: 'Member status in campaign' },
+        warmth: { type: 'number', description: '1-5 interest/warmth score' },
+        priority: { type: 'number', description: 'Priority ranking (higher = more important)' },
+        notes: { type: 'string', description: 'Notes about this person in the campaign' },
+        nextAction: { type: 'string', description: 'What to do next with this person' },
+        nextActionAt: { type: 'string', description: 'When to take the next action (ISO date)' },
+        lastOutreachAt: { type: 'string', description: 'When last contacted (ISO date)' },
+      },
+    },
+    handler: async (args) => {
+      let campaignId = args.campaignId as string | undefined;
+      if (!campaignId && args.campaignName) {
+        campaignId = await resolveCampaignId(args.campaignName as string) || undefined;
+        if (!campaignId) return { error: `Campaign "${args.campaignName}" not found` };
+      }
+      if (!campaignId) return { error: 'Either campaignId or campaignName is required' };
+
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        const found = await searchPeople({ query: args.personName as string, limit: 1 });
+        if (found.length > 0) personId = found[0].id;
+        else return { error: `Person "${args.personName}" not found` };
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      // Find the campaign member record
+      const members = await getCampaignMembers(campaignId, {});
+      const member = members.find((m: any) => m.personId === personId);
+      if (!member) return { error: 'Person is not a member of this campaign' };
+
+      const updateData: Record<string, unknown> = {};
+      if (args.status) updateData.status = args.status;
+      if (args.warmth != null) updateData.warmth = args.warmth;
+      if (args.priority != null) updateData.priority = args.priority;
+      if (args.notes) updateData.notes = args.notes;
+      if (args.nextAction) updateData.nextAction = args.nextAction;
+      if (args.nextActionAt) updateData.nextActionAt = new Date(args.nextActionAt as string);
+      if (args.lastOutreachAt) updateData.lastOutreachAt = new Date(args.lastOutreachAt as string);
+
+      const updated = await updateCampaignMember(member.id, updateData);
+      return { success: true, member: updated };
+    },
+  },
+
+  // 36. campaign_report
+  {
+    name: 'campaign_report',
+    description: 'Get a detailed report on a campaign: stats, member breakdown by status, who needs follow-up, and overdue actions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        campaignId: { type: 'string', description: 'Campaign UUID' },
+        campaignName: { type: 'string', description: 'Campaign name (will search for match)' },
+      },
+    },
+    handler: async (args) => {
+      let campaignId = args.campaignId as string | undefined;
+      if (!campaignId && args.campaignName) {
+        campaignId = await resolveCampaignId(args.campaignName as string) || undefined;
+        if (!campaignId) return { error: `Campaign "${args.campaignName}" not found` };
+      }
+      if (!campaignId) return { error: 'Either campaignId or campaignName is required' };
+
+      const campaignWithStats = await getCampaignWithStats(campaignId);
+      if (!campaignWithStats) return { error: 'Campaign not found' };
+
+      const members = await getCampaignMembers(campaignId, {});
+      const now = new Date();
+
+      const overdue = members.filter((m: any) =>
+        m.nextActionAt && new Date(m.nextActionAt) < now
+      ).map((m: any) => ({
+        personName: m.person?.name || 'Unknown',
+        personId: m.personId,
+        nextAction: m.nextAction,
+        nextActionAt: m.nextActionAt,
+        status: m.status,
+      }));
+
+      const notStarted = members.filter((m: any) => m.status === 'not_started').map((m: any) => ({
+        personName: m.person?.name || 'Unknown',
+        personId: m.personId,
+        tier: m.person?.tier,
+      }));
+
+      const highWarmth = members
+        .filter((m: any) => m.warmth != null && m.warmth >= 4 && m.status !== 'converted')
+        .map((m: any) => ({
+          personName: m.person?.name || 'Unknown',
+          personId: m.personId,
+          warmth: m.warmth,
+          status: m.status,
+        }));
+
+      return {
+        campaign: {
+          name: campaignWithStats.name,
+          status: campaignWithStats.status,
+          type: campaignWithStats.type,
+          goal: campaignWithStats.goal,
+        },
+        stats: campaignWithStats.stats,
+        overdue,
+        notStarted: notStarted.slice(0, 20),
+        highWarmthUnconverted: highWarmth,
+        totalMembers: members.length,
+      };
     },
   },
 ];

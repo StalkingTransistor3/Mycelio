@@ -335,3 +335,88 @@ export interface ApiError {
   message: string;
   statusCode: number;
 }
+
+// ── Campaigns ──
+
+export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
+
+export type CampaignType = 'outreach' | 'nurture' | 'event' | 'recruitment' | 'other';
+
+export type CampaignMemberStatus =
+  | 'not_started'
+  | 'contacted'
+  | 'interested'
+  | 'not_interested'
+  | 'converted'
+  | 'deferred';
+
+export interface Campaign {
+  id: string;
+  name: string;
+  description: string | null;
+  goal: string | null;
+  status: CampaignStatus;
+  type: CampaignType;
+  tags: string[];
+  organizationIds: string[];
+  eventIds: string[];
+  startDate: string | null;
+  endDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CampaignMember {
+  id: string;
+  campaignId: string;
+  personId: string;
+  status: CampaignMemberStatus;
+  priority: number;
+  warmth: number | null;
+  notes: string | null;
+  lastOutreachAt: string | null;
+  nextActionAt: string | null;
+  nextAction: string | null;
+  addedAt: string;
+  updatedAt: string;
+}
+
+export interface CampaignMemberEnriched extends CampaignMember {
+  person: Person;
+}
+
+export interface CampaignStats {
+  totalMembers: number;
+  byStatus: Record<CampaignMemberStatus, number>;
+  contactedPercent: number;
+  conversionRate: number;
+  avgWarmth: number | null;
+}
+
+export interface CampaignWithStats extends Campaign {
+  stats: CampaignStats;
+}
+
+export interface CampaignSearchParams {
+  query?: string;
+  status?: CampaignStatus;
+  type?: CampaignType;
+  tags?: string[];
+  limit?: number;
+  offset?: number;
+}
+
+export interface CampaignMemberSearchParams {
+  query?: string;
+  status?: CampaignMemberStatus;
+  tier?: RelationshipTier;
+  stage?: RelationshipStage;
+  tags?: string[];
+  organizationId?: string;
+  minWarmth?: number;
+  maxWarmth?: number;
+  sortBy?: 'name' | 'warmth' | 'tier' | 'priority' | 'lastOutreach' | 'nextAction' | 'addedAt';
+  sortOrder?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
