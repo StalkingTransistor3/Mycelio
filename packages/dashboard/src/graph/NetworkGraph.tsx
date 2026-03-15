@@ -1,7 +1,6 @@
-import { useEffect, useRef, useCallback } from 'react';
-import * as d3 from 'd3';
+import { useEffect, useRef, useCallback, useMemo } from 'react';
+import ForceGraph2D from 'react-force-graph-2d';
 import type { GraphNode, GraphEdge, GraphGroup } from '@mycelio/shared';
-import type { SimParams } from './GraphSimControls.js';
 
 export interface GraphAPI {
   panToNode: (nodeId: string) => void;
@@ -15,18 +14,19 @@ interface Props {
   width: number;
   height: number;
   onNodeClick?: (node: GraphNode) => void;
-  simParams: SimParams;
+  onNodeHover?: (node: GraphNode | null) => void;
   highlightNodeId?: string | null;
   highlightOrgId?: string | null;
+  egoNodeId?: string | null;
   onReady?: (api: GraphAPI) => void;
 }
 
 const tierRadius: Record<number, number> = {
-  1: 16,
-  2: 13,
-  3: 10,
-  4: 8,
-  5: 6,
+  1: 8,
+  2: 6.5,
+  3: 5,
+  4: 4,
+  5: 3,
 };
 
 const tierColor: Record<number, string> = {
@@ -37,468 +37,229 @@ const tierColor: Record<number, string> = {
   5: '#555566',
 };
 
-const strengthWidth: Record<string, number> = {
-  strong: 3,
-  medium: 2,
-  weak: 1,
-};
+interface FGNode extends GraphNode {
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  __connections?: Set<string>;
+}
 
-const ORG_COLORS = [
-  '#ff00e5', '#00f0ff', '#39ff14', '#f0ff00', '#ff6600',
-  '#aa44ff', '#00ff99', '#ff4466', '#44aaff', '#ffaa00',
-  '#66ffcc', '#ff66aa', '#88ff44', '#ff8844', '#44ffdd',
-  '#dd44ff', '#ffdd44', '#44ddff', '#ff4488', '#88ddff',
-];
-
-type SimNode = d3.SimulationNodeDatum & GraphNode;
-type SimLink = d3.SimulationLinkDatum<SimNode> & GraphEdge;
+interface FGLink {
+  source: string | FGNode;
+  target: string | FGNode;
+  strength: string;
+  context: string | null;
+}
 
 export default function NetworkGraph({
-  nodes, edges, groups, width, height, onNodeClick,
-  simParams, highlightNodeId, highlightOrgId, onReady,
+  nodes, edges, groups, width, height, onNodeClick, onNodeHover,
+  highlightNodeId, highlightOrgId, egoNodeId, onReady,
 }: Props) {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const simRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
-  const simNodesRef = useRef<SimNode[]>([]);
-  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
-  const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const orgCentersRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const orgBaseAnglesRef = useRef<Map<string, number>>(new Map());
-  const nodeSelectionsRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
-  const linkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
-  const animFrameRef = useRef<number | null>(null);
+  const fgRef = useRef<any>(null);
+  const hoveredNodeRef = useRef<string | null>(null);
+  const nodesRef = useRef<FGNode[]>([]);
 
-  // Pan to a specific node
-  const panToNode = useCallback((nodeId: string) => {
-    const svg = svgRef.current;
-    const zoom = zoomRef.current;
-    if (!svg || !zoom) return;
+  // Build connection lookup for highlighting
+  const connectionMap = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const e of edges) {
+      if (!map.has(e.source)) map.set(e.source, new Set());
+      if (!map.has(e.target)) map.set(e.target, new Set());
+      map.get(e.source)!.add(e.target);
+      map.get(e.target)!.add(e.source);
+    }
+    return map;
+  }, [edges]);
 
-    const node = simNodesRef.current.find((n) => n.id === nodeId);
-    if (!node || node.x == null || node.y == null) return;
+  // Prepare graph data for force-graph
+  const graphData = useMemo(() => {
+    const fgNodes: FGNode[] = nodes.map((n) => ({
+      ...n,
+      __connections: connectionMap.get(n.id) || new Set(),
+    }));
+    nodesRef.current = fgNodes;
 
-    const svgSel = d3.select(svg);
-    const scale = 1.5;
-    const transform = d3.zoomIdentity
-      .translate(width / 2 - node.x * scale, height / 2 - node.y * scale)
-      .scale(scale);
-
-    svgSel.transition().duration(600).call(zoom.transform as any, transform);
-  }, [width, height]);
-
-  // Pan to an org cluster centroid
-  const panToOrg = useCallback((orgId: string) => {
-    const svg = svgRef.current;
-    const zoom = zoomRef.current;
-    if (!svg || !zoom) return;
-
-    // Compute centroid from current node positions
-    const orgNodes = simNodesRef.current.filter((n) => n.organizationId === orgId);
-    if (orgNodes.length === 0) return;
-
-    const cx = orgNodes.reduce((s, n) => s + (n.x ?? 0), 0) / orgNodes.length;
-    const cy = orgNodes.reduce((s, n) => s + (n.y ?? 0), 0) / orgNodes.length;
-
-    const svgSel = d3.select(svg);
-    const scale = 1.2;
-    const transform = d3.zoomIdentity
-      .translate(width / 2 - cx * scale, height / 2 - cy * scale)
-      .scale(scale);
-
-    svgSel.transition().duration(600).call(zoom.transform as any, transform);
-  }, [width, height]);
-
-  // Build the SVG structure and simulation when data changes
-  useEffect(() => {
-    if (!svgRef.current || nodes.length === 0) return;
-
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
-
-    const simNodes: SimNode[] = nodes.map((n) => ({ ...n }));
-    const simLinks: SimLink[] = edges.map((e) => ({
-      ...e,
+    const fgLinks: FGLink[] = edges.map((e) => ({
       source: e.source,
       target: e.target,
+      strength: e.strength,
+      context: e.context,
     }));
 
-    simNodesRef.current = simNodes;
+    return { nodes: fgNodes, links: fgLinks };
+  }, [nodes, edges, connectionMap]);
 
-    // Compute cluster center positions
-    const orgIds = groups.map((g) => g.id);
-    const orgCenters = new Map<string, { x: number; y: number }>();
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const clusterRadius = Math.min(width, height) * 0.32;
+  // Pan to node
+  const panToNode = useCallback((nodeId: string) => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    const node = nodesRef.current.find((n) => n.id === nodeId);
+    if (node && node.x != null && node.y != null) {
+      fg.centerAt(node.x, node.y, 600);
+      fg.zoom(2, 600);
+    }
+  }, []);
 
-    const baseAngles = new Map<string, number>();
-    orgIds.forEach((id, i) => {
-      const angle = (2 * Math.PI * i) / orgIds.length - Math.PI / 2;
-      baseAngles.set(id, angle);
-      orgCenters.set(id, {
-        x: centerX + clusterRadius * Math.cos(angle),
-        y: centerY + clusterRadius * Math.sin(angle),
-      });
-    });
-    orgCentersRef.current = orgCenters;
-    orgBaseAnglesRef.current = baseAngles;
+  // Pan to org cluster centroid
+  const panToOrg = useCallback((orgId: string) => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    const orgNodes = nodesRef.current.filter((n) => n.organizationId === orgId);
+    if (orgNodes.length === 0) return;
+    const cx = orgNodes.reduce((s, n) => s + (n.x ?? 0), 0) / orgNodes.length;
+    const cy = orgNodes.reduce((s, n) => s + (n.y ?? 0), 0) / orgNodes.length;
+    fg.centerAt(cx, cy, 600);
+    fg.zoom(1.5, 600);
+  }, []);
 
-    // Assign color per org
-    const orgColorMap = new Map<string, string>();
-    orgIds.forEach((id, i) => {
-      orgColorMap.set(id, ORG_COLORS[i % ORG_COLORS.length]);
-    });
+  // Expose API
+  useEffect(() => {
+    onReady?.({ panToNode, panToOrg });
+  }, [onReady, panToNode, panToOrg]);
 
-    const simulation = d3
-      .forceSimulation(simNodes)
-      .force(
-        'link',
-        d3.forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(simParams.linkDistance),
-      )
-      .force('charge', d3.forceManyBody().strength(simParams.repulsion))
-      .force('collision', d3.forceCollide().radius(simParams.collisionRadius))
-      .force(
-        'x',
-        d3.forceX<SimNode>((d) => {
-          const center = d.organizationId ? orgCenters.get(d.organizationId) : null;
-          return center ? center.x : centerX;
-        }).strength((d) => (d.organizationId ? simParams.clusterStrength : 0.05)),
-      )
-      .force(
-        'y',
-        d3.forceY<SimNode>((d) => {
-          const center = d.organizationId ? orgCenters.get(d.organizationId) : null;
-          return center ? center.y : centerY;
-        }).strength((d) => (d.organizationId ? simParams.clusterStrength : 0.05)),
-      );
+  // Custom node rendering
+  const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    const n = node as FGNode;
+    const r = tierRadius[n.tier] || 5;
+    const color = tierColor[n.tier] || '#555566';
+    const x = n.x ?? 0;
+    const y = n.y ?? 0;
 
-    simRef.current = simulation;
+    const isHovered = hoveredNodeRef.current === n.id;
+    const isHighlighted = highlightNodeId === n.id;
+    const isEgoCenter = egoNodeId === n.id;
+    const isConnectedToHovered = hoveredNodeRef.current && n.__connections?.has(hoveredNodeRef.current);
+    const isConnectedToHighlight = highlightNodeId && n.__connections?.has(highlightNodeId);
+    const isOrgHighlighted = highlightOrgId && n.organizationId === highlightOrgId;
 
-    // Glow filter
-    const defs = svg.append('defs');
-    const filter = defs.append('filter').attr('id', 'glow');
-    filter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'coloredBlur');
-    const feMerge = filter.append('feMerge');
-    feMerge.append('feMergeNode').attr('in', 'coloredBlur');
-    feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+    const hasAnyHighlight = highlightNodeId || highlightOrgId || hoveredNodeRef.current;
 
-    const g = svg.append('g');
-    gRef.current = g;
+    let alpha = 0.7;
+    let nodeR = r;
 
-    const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.2, 4]).on('zoom', (event) => {
-      g.attr('transform', event.transform);
-    });
-    zoomRef.current = zoom;
-
-    svg.call(
-      zoom as unknown as (selection: d3.Selection<SVGSVGElement, unknown, null, undefined>) => void,
-    );
-
-    // Hull layer
-    const hullGroup = g.append('g').attr('class', 'hulls');
-
-    // Links
-    const linkGroup = g.append('g');
-    const linkSel = linkGroup
-      .selectAll<SVGLineElement, SimLink>('line')
-      .data(simLinks)
-      .join('line')
-      .attr('stroke', 'rgba(0, 240, 255, 0.15)')
-      .attr('stroke-width', (d) => strengthWidth[d.strength] || 1);
-    linkSelectionRef.current = linkSel;
-
-    // Nodes
-    const node = g
-      .append('g')
-      .selectAll<SVGGElement, SimNode>('g')
-      .data(simNodes)
-      .join('g')
-      .attr('cursor', 'pointer')
-      .call(
-        d3
-          .drag<SVGGElement, SimNode>()
-          .on('start', (event, d) => {
-            if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-          })
-          .on('drag', (event, d) => {
-            d.fx = event.x;
-            d.fy = event.y;
-          })
-          .on('end', (event, d) => {
-            if (!event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-          }),
-      );
-    nodeSelectionsRef.current = node;
-
-    node
-      .append('circle')
-      .attr('r', (d) => tierRadius[d.tier] || 10)
-      .attr('fill', (d) => tierColor[d.tier] || '#555566')
-      .attr('fill-opacity', 0.6)
-      .attr('stroke', (d) => tierColor[d.tier] || '#555566')
-      .attr('stroke-width', 1.5)
-      .attr('filter', 'url(#glow)');
-
-    node
-      .append('text')
-      .text((d) => d.name)
-      .attr('font-size', '10px')
-      .attr('dx', (d) => (tierRadius[d.tier] || 10) + 4)
-      .attr('dy', 4)
-      .attr('fill', 'rgba(255, 255, 255, 0.5)')
-      .attr('font-family', 'monospace');
-
-    node.on('click', (_event, d) => {
-      onNodeClick?.(d);
-    });
-
-    // Build a lookup for org name by id
-    const orgNameMap = new Map<string, string>();
-    for (const grp of groups) {
-      orgNameMap.set(grp.id, grp.name);
+    if (hasAnyHighlight) {
+      if (isHovered || isHighlighted || isEgoCenter) {
+        alpha = 1;
+        nodeR = r * 1.4;
+      } else if (isConnectedToHovered || isConnectedToHighlight || isOrgHighlighted) {
+        alpha = 0.85;
+      } else {
+        alpha = 0.12;
+      }
     }
 
-    simulation.on('tick', () => {
-      linkSel
-        .attr('x1', (d) => ((d.source as SimNode).x!))
-        .attr('y1', (d) => ((d.source as SimNode).y!))
-        .attr('x2', (d) => ((d.target as SimNode).x!))
-        .attr('y2', (d) => ((d.target as SimNode).y!));
+    // Glow effect for important nodes
+    if (alpha > 0.5) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, nodeR + 3, 0, 2 * Math.PI);
+      ctx.fillStyle = color + '30';
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 12;
+      ctx.fill();
+      ctx.restore();
+    }
 
-      node.attr('transform', (d) => `translate(${d.x},${d.y})`);
+    // Node circle
+    ctx.beginPath();
+    ctx.arc(x, y, nodeR, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.fill();
 
-      // Update convex hulls
-      const orgNodePositions = new Map<string, [number, number][]>();
-      for (const n of simNodes) {
-        if (n.organizationId && n.x != null && n.y != null) {
-          if (!orgNodePositions.has(n.organizationId)) {
-            orgNodePositions.set(n.organizationId, []);
-          }
-          orgNodePositions.get(n.organizationId)!.push([n.x, n.y]);
-        }
-      }
+    // Stroke
+    ctx.strokeStyle = color;
+    ctx.lineWidth = isHighlighted || isEgoCenter ? 2 : 0.8;
+    ctx.stroke();
 
-      const hullData: { orgId: string; hull: [number, number][] }[] = [];
-      for (const [orgId, points] of orgNodePositions) {
-        if (points.length < 3) {
-          if (points.length === 1) {
-            const [px, py] = points[0];
-            const pad = 30;
-            hullData.push({
-              orgId,
-              hull: [
-                [px - pad, py - pad],
-                [px + pad, py - pad],
-                [px + pad, py + pad],
-                [px - pad, py + pad],
-              ],
-            });
-          } else if (points.length === 2) {
-            const [[x1, y1], [x2, y2]] = points;
-            const dx = x2 - x1;
-            const dy = y2 - y1;
-            const len = Math.sqrt(dx * dx + dy * dy) || 1;
-            const nx = (-dy / len) * 20;
-            const ny = (dx / len) * 20;
-            hullData.push({
-              orgId,
-              hull: [
-                [x1 + nx, y1 + ny],
-                [x1 - nx, y1 - ny],
-                [x2 - nx, y2 - ny],
-                [x2 + nx, y2 + ny],
-              ],
-            });
-          }
-          continue;
-        }
+    // Label — only show at reasonable zoom or for highlighted/hovered nodes
+    const showLabel = globalScale > 1.2 || isHovered || isHighlighted || isEgoCenter || isConnectedToHovered || isConnectedToHighlight;
+    if (showLabel) {
+      const fontSize = Math.max(10 / globalScale, 2.5);
+      ctx.font = `${fontSize}px 'JetBrains Mono', 'Fira Code', monospace`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.9})`;
+      ctx.fillText(n.name, x + nodeR + 3, y);
+    }
 
-        const pad = 25;
-        const centroidX = points.reduce((s, p) => s + p[0], 0) / points.length;
-        const centroidY = points.reduce((s, p) => s + p[1], 0) / points.length;
-        const expanded: [number, number][] = points.map(([px, py]) => {
-          const dx = px - centroidX;
-          const dy = py - centroidY;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          return [px + (dx / dist) * pad, py + (dy / dist) * pad];
-        });
+    ctx.globalAlpha = 1;
+  }, [highlightNodeId, highlightOrgId, egoNodeId]);
 
-        const hull = d3.polygonHull(expanded);
-        if (hull) {
-          hullData.push({ orgId, hull });
-        }
-      }
+  // Custom node pointer area (for hit detection)
+  const nodePointerAreaPaint = useCallback((node: any, color: string, ctx: CanvasRenderingContext2D) => {
+    const n = node as FGNode;
+    const r = (tierRadius[n.tier] || 5) + 3;
+    ctx.beginPath();
+    ctx.arc(n.x ?? 0, n.y ?? 0, r, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }, []);
 
-      const hullPaths = hullGroup.selectAll<SVGPathElement, typeof hullData[0]>('path').data(hullData, (d) => d.orgId);
+  // Custom link rendering
+  const linkCanvasObject = useCallback((link: any, ctx: CanvasRenderingContext2D, _globalScale: number) => {
+    const src = link.source as FGNode;
+    const tgt = link.target as FGNode;
+    if (src.x == null || src.y == null || tgt.x == null || tgt.y == null) return;
 
-      hullPaths
-        .enter()
-        .append('path')
-        .merge(hullPaths)
-        .attr('d', (d) => `M${d.hull.map((p) => p.join(',')).join('L')}Z`)
-        .attr('fill', (d) => {
-          const color = orgColorMap.get(d.orgId) || '#ffffff';
-          return color + '0a';
-        })
-        .attr('stroke', (d) => {
-          const color = orgColorMap.get(d.orgId) || '#ffffff';
-          return color + '30';
-        })
-        .attr('stroke-width', 1)
-        .attr('stroke-dasharray', '4,4');
+    const hovered = hoveredNodeRef.current;
+    const highlighted = highlightNodeId;
 
-      hullPaths.exit().remove();
+    const isConnectedToActive =
+      (hovered && (src.id === hovered || tgt.id === hovered)) ||
+      (highlighted && (src.id === highlighted || tgt.id === highlighted));
 
-      // Org labels
-      const labelData: { orgId: string; x: number; y: number; name: string }[] = [];
-      for (const { orgId, hull } of hullData) {
-        const name = orgNameMap.get(orgId);
-        if (!name) continue;
-        const centroid = d3.polygonCentroid(hull);
-        const minY = Math.min(...hull.map((p) => p[1]));
-        labelData.push({ orgId, x: centroid[0], y: minY - 10, name });
-      }
+    let alpha = 0.08;
+    let lineWidth = 0.5;
 
-      const labels = hullGroup.selectAll<SVGTextElement, typeof labelData[0]>('text').data(labelData, (d) => d.orgId);
+    if (isConnectedToActive) {
+      alpha = 0.6;
+      lineWidth = link.strength === 'strong' ? 2 : link.strength === 'medium' ? 1.2 : 0.8;
+    } else if (hovered || highlighted) {
+      alpha = 0.03;
+    }
 
-      labels
-        .enter()
-        .append('text')
-        .merge(labels)
-        .attr('x', (d) => d.x)
-        .attr('y', (d) => d.y)
-        .attr('text-anchor', 'middle')
-        .attr('font-size', '9px')
-        .attr('font-family', 'monospace')
-        .attr('fill', (d) => {
-          const color = orgColorMap.get(d.orgId) || '#ffffff';
-          return color + '60';
-        })
-        .attr('font-weight', '600')
-        .text((d) => d.name);
+    ctx.beginPath();
+    ctx.moveTo(src.x, src.y);
+    ctx.lineTo(tgt.x, tgt.y);
+    ctx.strokeStyle = `rgba(0, 240, 255, ${alpha})`;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }, [highlightNodeId]);
 
-      labels.exit().remove();
-    });
+  const handleNodeHover = useCallback((node: any) => {
+    hoveredNodeRef.current = node ? (node as FGNode).id : null;
+    onNodeHover?.(node as GraphNode | null);
+  }, [onNodeHover]);
 
-    // Expose API
-    onReady?.({ panToNode, panToOrg });
-
-    // Ambient orbit animation — slowly rotate cluster centers
-    const orbitStart = performance.now();
-    const ORBIT_SPEED = 0.00003; // radians per ms (~3.5 min per revolution)
-
-    const animateOrbit = (now: number) => {
-      const elapsed = now - orbitStart;
-      const angleOffset = elapsed * ORBIT_SPEED;
-
-      // Update force targets to orbited positions
-      for (const [orgId, baseAngle] of baseAngles) {
-        const newAngle = baseAngle + angleOffset;
-        orgCenters.set(orgId, {
-          x: centerX + clusterRadius * Math.cos(newAngle),
-          y: centerY + clusterRadius * Math.sin(newAngle),
-        });
-      }
-
-      // Nudge simulation at very low alpha to keep it alive
-      if (simulation.alpha() < 0.015) {
-        simulation.alpha(0.015).restart();
-      }
-
-      animFrameRef.current = requestAnimationFrame(animateOrbit);
-    };
-    animFrameRef.current = requestAnimationFrame(animateOrbit);
-
-    return () => {
-      simulation.stop();
-      simRef.current = null;
-      if (animFrameRef.current != null) {
-        cancelAnimationFrame(animFrameRef.current);
-        animFrameRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, groups, width, height, onNodeClick]);
-
-  // Update forces when simParams change (without rebuilding SVG)
-  useEffect(() => {
-    const sim = simRef.current;
-    if (!sim) return;
-
-    const centerX = width / 2;
-    const orgCenters = orgCentersRef.current;
-
-    const linkForce = sim.force('link') as d3.ForceLink<SimNode, SimLink> | undefined;
-    if (linkForce) linkForce.distance(simParams.linkDistance);
-
-    const chargeForce = sim.force('charge') as d3.ForceManyBody<SimNode> | undefined;
-    if (chargeForce) chargeForce.strength(simParams.repulsion);
-
-    const collisionForce = sim.force('collision') as d3.ForceCollide<SimNode> | undefined;
-    if (collisionForce) collisionForce.radius(simParams.collisionRadius);
-
-    const xForce = sim.force('x') as d3.ForceX<SimNode> | undefined;
-    if (xForce) xForce.strength((d) => (d.organizationId ? simParams.clusterStrength : 0.05));
-
-    const yForce = sim.force('y') as d3.ForceY<SimNode> | undefined;
-    if (yForce) yForce.strength((d) => (d.organizationId ? simParams.clusterStrength : 0.05));
-
-    sim.alpha(0.3).restart();
-  }, [simParams, width]);
-
-  // Update highlight styling
-  useEffect(() => {
-    const nodeSel = nodeSelectionsRef.current;
-    const linkSel = linkSelectionRef.current;
-    if (!nodeSel || !linkSel) return;
-
-    const hasHighlight = highlightNodeId || highlightOrgId;
-
-    nodeSel.select('circle')
-      .transition().duration(300)
-      .attr('fill-opacity', (d) => {
-        if (!hasHighlight) return 0.6;
-        if (highlightNodeId && d.id === highlightNodeId) return 1;
-        if (highlightOrgId && d.organizationId === highlightOrgId) return 0.9;
-        return 0.15;
-      })
-      .attr('stroke-width', (d) => {
-        if (highlightNodeId && d.id === highlightNodeId) return 3;
-        if (highlightOrgId && d.organizationId === highlightOrgId) return 2.5;
-        return 1.5;
-      })
-      .attr('r', (d) => {
-        const base = tierRadius[d.tier] || 10;
-        if (highlightNodeId && d.id === highlightNodeId) return base * 1.5;
-        return base;
-      });
-
-    nodeSel.select('text')
-      .transition().duration(300)
-      .attr('fill', (d) => {
-        if (!hasHighlight) return 'rgba(255, 255, 255, 0.5)';
-        if (highlightNodeId && d.id === highlightNodeId) return 'rgba(255, 255, 255, 0.95)';
-        if (highlightOrgId && d.organizationId === highlightOrgId) return 'rgba(255, 255, 255, 0.8)';
-        return 'rgba(255, 255, 255, 0.12)';
-      });
-
-    linkSel
-      .transition().duration(300)
-      .attr('stroke-opacity', () => hasHighlight ? 0.05 : 1);
-  }, [highlightNodeId, highlightOrgId]);
+  const handleNodeClick = useCallback((node: any) => {
+    onNodeClick?.(node as GraphNode);
+  }, [onNodeClick]);
 
   return (
-    <svg
-      ref={svgRef}
-      width="100%"
-      height="100%"
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="xMidYMid meet"
-      className="bg-transparent"
+    <ForceGraph2D
+      ref={fgRef}
+      graphData={graphData}
+      width={width}
+      height={height}
+      backgroundColor="#0a0a0f"
+      nodeId="id"
+      linkSource="source"
+      linkTarget="target"
+      nodeCanvasObject={nodeCanvasObject}
+      nodePointerAreaPaint={nodePointerAreaPaint}
+      linkCanvasObject={linkCanvasObject}
+      onNodeClick={handleNodeClick}
+      onNodeHover={handleNodeHover}
+      nodeLabel={() => ''}
+      cooldownTicks={150}
+      d3AlphaDecay={0.02}
+      d3VelocityDecay={0.3}
+      warmupTicks={50}
+      enableNodeDrag={true}
+      enableZoomInteraction={true}
+      enablePanInteraction={true}
     />
   );
 }

@@ -40,7 +40,10 @@ export async function getConnectionsForPerson(personId: string) {
     );
 }
 
-export async function getGraphData(): Promise<GraphData> {
+export async function getGraphData(options?: {
+  tier?: number;
+  limit?: number;
+}): Promise<GraphData> {
   // Fetch all people and all organizations separately to handle multi-org
   const allPeopleRaw = await db.select().from(people);
   const allOrgs = await db.select().from(organizations);
@@ -48,7 +51,30 @@ export async function getGraphData(): Promise<GraphData> {
 
   const orgById = new Map(allOrgs.map(o => [o.id, o]));
 
-  const nodes: GraphNode[] = allPeopleRaw.map((p) => {
+  // Build adjacency for degree counting
+  const degreeCount = new Map<string, number>();
+  for (const c of allConnections) {
+    degreeCount.set(c.fromPersonId, (degreeCount.get(c.fromPersonId) || 0) + 1);
+    degreeCount.set(c.toPersonId, (degreeCount.get(c.toPersonId) || 0) + 1);
+  }
+
+  let filteredPeople = allPeopleRaw;
+
+  // Filter by tier if provided
+  if (options?.tier) {
+    const maxTier = options.tier;
+    filteredPeople = filteredPeople.filter((p) => (p.tier as number) <= maxTier);
+  }
+
+  // Sort by degree (most connected first) and apply limit
+  if (options?.limit) {
+    filteredPeople.sort((a, b) => (degreeCount.get(b.id) || 0) - (degreeCount.get(a.id) || 0));
+    filteredPeople = filteredPeople.slice(0, options.limit);
+  }
+
+  const filteredIds = new Set(filteredPeople.map((p) => p.id));
+
+  const nodes: GraphNode[] = filteredPeople.map((p) => {
     // Determine primary group: prefer first org in organizationIds, fallback to organizationId
     const orgIds = (p.organizationIds as string[]) || [];
     const primaryOrgId = orgIds[0] || p.organizationId || null;
@@ -65,16 +91,19 @@ export async function getGraphData(): Promise<GraphData> {
     };
   });
 
-  const edges: GraphEdge[] = allConnections.map((c) => ({
-    source: c.fromPersonId,
-    target: c.toPersonId,
-    strength: c.strength as ConnectionStrength,
-    context: c.context,
-  }));
+  // Only include edges where both endpoints are in filteredIds
+  const edges: GraphEdge[] = allConnections
+    .filter((c) => filteredIds.has(c.fromPersonId) && filteredIds.has(c.toPersonId))
+    .map((c) => ({
+      source: c.fromPersonId,
+      target: c.toPersonId,
+      strength: c.strength as ConnectionStrength,
+      context: c.context,
+    }));
 
-  // Build groups from all orgs that have at least one person
+  // Build groups from all orgs that have at least one person in filtered set
   const orgMap = new Map<string, GraphGroup>();
-  for (const p of allPeopleRaw) {
+  for (const p of filteredPeople) {
     const orgIds = (p.organizationIds as string[]) || [];
     const allOrgIds = p.organizationId ? Array.from(new Set([...orgIds, p.organizationId])) : orgIds;
     for (const oid of allOrgIds) {
@@ -89,6 +118,89 @@ export async function getGraphData(): Promise<GraphData> {
   const groups: GraphGroup[] = Array.from(orgMap.values());
 
   return { nodes, edges, groups };
+}
+
+export async function getEgoGraph(personId: string, depth: number = 1): Promise<GraphData> {
+  const allPeopleRaw = await db.select().from(people);
+  const allOrgs = await db.select().from(organizations);
+  const allConnections = await db.select().from(connections);
+
+  const orgById = new Map(allOrgs.map(o => [o.id, o]));
+  const peopleById = new Map(allPeopleRaw.map(p => [p.id, p]));
+
+  // Build adjacency
+  const adjacency = new Map<string, Set<string>>();
+  for (const c of allConnections) {
+    if (!adjacency.has(c.fromPersonId)) adjacency.set(c.fromPersonId, new Set());
+    if (!adjacency.has(c.toPersonId)) adjacency.set(c.toPersonId, new Set());
+    adjacency.get(c.fromPersonId)!.add(c.toPersonId);
+    adjacency.get(c.toPersonId)!.add(c.fromPersonId);
+  }
+
+  // BFS to collect nodes within depth
+  const visited = new Set<string>();
+  let frontier = new Set<string>([personId]);
+  visited.add(personId);
+
+  for (let d = 0; d < depth; d++) {
+    const nextFrontier = new Set<string>();
+    for (const nodeId of frontier) {
+      for (const neighbor of adjacency.get(nodeId) || []) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          nextFrontier.add(neighbor);
+        }
+      }
+    }
+    frontier = nextFrontier;
+  }
+
+  // Build nodes from visited set
+  const nodes: GraphNode[] = [];
+  for (const id of visited) {
+    const p = peopleById.get(id);
+    if (!p) continue;
+    const orgIds = (p.organizationIds as string[]) || [];
+    const primaryOrgId = orgIds[0] || p.organizationId || null;
+    const primaryOrg = primaryOrgId ? orgById.get(primaryOrgId) : null;
+
+    nodes.push({
+      id: p.id,
+      name: p.name,
+      tier: p.tier as 1 | 2 | 3 | 4 | 5,
+      group: primaryOrg?.name || null,
+      organizationId: primaryOrgId,
+      organizationIds: orgIds,
+      tags: p.tags as string[],
+    });
+  }
+
+  // Edges where both endpoints are in visited
+  const edges: GraphEdge[] = allConnections
+    .filter((c) => visited.has(c.fromPersonId) && visited.has(c.toPersonId))
+    .map((c) => ({
+      source: c.fromPersonId,
+      target: c.toPersonId,
+      strength: c.strength as ConnectionStrength,
+      context: c.context,
+    }));
+
+  // Groups
+  const orgMap = new Map<string, GraphGroup>();
+  for (const n of nodes) {
+    const orgIds = n.organizationIds || [];
+    const allOrgIds = n.organizationId ? Array.from(new Set([...orgIds, n.organizationId])) : orgIds;
+    for (const oid of allOrgIds) {
+      if (!orgMap.has(oid)) {
+        const org = orgById.get(oid);
+        if (org) {
+          orgMap.set(oid, { id: org.id, name: org.name, type: org.type || 'company' });
+        }
+      }
+    }
+  }
+
+  return { nodes, edges, groups: Array.from(orgMap.values()) };
 }
 
 export async function findConnectionPath(

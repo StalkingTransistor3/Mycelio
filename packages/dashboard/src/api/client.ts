@@ -55,7 +55,18 @@ export const api = {
   getOrganizationMembers: (id: string) => request<{ data: unknown[] }>(`/organizations/${id}/members`),
 
   // Graph
-  getGraph: () => request<{ data: { nodes: unknown[]; edges: unknown[] } }>('/graph'),
+  getGraph: (params?: { tier?: number; limit?: number }) => {
+    const qs = params ? '?' + new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => [k, String(v)])
+    ).toString() : '';
+    return request<{ data: { nodes: unknown[]; edges: unknown[]; groups: unknown[] } }>(`/graph${qs}`);
+  },
+  getEgoGraph: (personId: string, depth?: number) => {
+    const qs = depth != null ? `?depth=${depth}` : '';
+    return request<{ data: { nodes: unknown[]; edges: unknown[]; groups: unknown[] } }>(`/graph/ego/${personId}${qs}`);
+  },
 
   // Follow-ups
   getFollowUps: () => request<{ data: unknown[] }>('/follow-ups'),

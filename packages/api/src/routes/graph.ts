@@ -1,11 +1,25 @@
 import { FastifyInstance } from 'fastify';
-import { getGraphData, findConnectionPath, createConnection } from '../services/connections.js';
+import { getGraphData, getEgoGraph, findConnectionPath, createConnection } from '../services/connections.js';
 import { computeInfluenceScores, detectMicroCommunities, findWarmPath, getSocialContext } from '../services/graph-analytics.js';
 
 export async function graphRoutes(app: FastifyInstance) {
   // GET /api/graph — nodes + edges for D3
-  app.get('/graph', async () => {
-    const data = await getGraphData();
+  // Supports ?tier=N and ?limit=N query params for filtering
+  app.get('/graph', async (request) => {
+    const query = request.query as Record<string, string>;
+    const options: { tier?: number; limit?: number } = {};
+    if (query.tier) options.tier = parseInt(query.tier, 10);
+    if (query.limit) options.limit = parseInt(query.limit, 10);
+    const data = await getGraphData(options);
+    return { data };
+  });
+
+  // GET /api/graph/ego/:personId — ego-centric subgraph
+  app.get('/graph/ego/:personId', async (request) => {
+    const { personId } = request.params as { personId: string };
+    const query = request.query as Record<string, string>;
+    const depth = query.depth ? parseInt(query.depth, 10) : 1;
+    const data = await getEgoGraph(personId, depth);
     return { data };
   });
 

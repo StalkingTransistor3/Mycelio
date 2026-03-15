@@ -1,26 +1,49 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useGraph } from '../hooks/useGraph.js';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
+import { useGraph, useEgoGraph } from '../hooks/useGraph.js';
 import NetworkGraph from '../graph/NetworkGraph.js';
 import type { GraphAPI } from '../graph/NetworkGraph.js';
 import GraphControls from '../graph/GraphControls.js';
-import GraphSimControls, { DEFAULT_SIM_PARAMS } from '../graph/GraphSimControls.js';
-import type { SimParams } from '../graph/GraphSimControls.js';
 import GraphSearch from '../graph/GraphSearch.js';
 import type { GraphNode } from '@mycelio/shared';
 
+const tierColor: Record<number, string> = {
+  1: '#ff00e5',
+  2: '#00f0ff',
+  3: '#39ff14',
+  4: '#f0ff00',
+  5: '#555566',
+};
+
+const tierLabel: Record<number, string> = {
+  1: 'Inner Circle',
+  2: 'Key',
+  3: 'Active',
+  4: 'Extended',
+  5: 'Acquaintance',
+};
+
 export default function GraphView() {
-  const { data: graph, isLoading, error } = useGraph();
+  // Smart default: load tier 1-2 + limit 200 most connected
+  const { data: overviewGraph, isLoading, error } = useGraph({ tier: 2, limit: 200 });
   const [tierFilter, setTierFilter] = useState<number | null>(null);
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [connectedOnly, setConnectedOnly] = useState(false);
-  const [simParams, setSimParams] = useState<SimParams>({ ...DEFAULT_SIM_PARAMS });
   const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
   const [highlightOrgId, setHighlightOrgId] = useState<string | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+
+  // Ego mode state
+  const [egoNodeId, setEgoNodeId] = useState<string | null>(null);
+  const [egoDepth, setEgoDepth] = useState(1);
+  const { data: egoGraph } = useEgoGraph(egoNodeId, egoDepth);
+
   const graphApiRef = useRef<GraphAPI | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const navigate = useNavigate();
+
+  // Tooltip state
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -33,12 +56,17 @@ export default function GraphView() {
     return () => ro.disconnect();
   }, []);
 
-  const handleNodeClick = useCallback(
-    (node: GraphNode) => {
-      navigate(`/people/${node.id}`);
-    },
-    [navigate],
-  );
+  const isEgoMode = egoNodeId !== null;
+  const activeGraph = isEgoMode && egoGraph ? egoGraph : overviewGraph;
+
+  const handleNodeClick = useCallback((node: GraphNode) => {
+    setEgoNodeId(node.id);
+    setEgoDepth(1);
+  }, []);
+
+  const exitEgoMode = useCallback(() => {
+    setEgoNodeId(null);
+  }, []);
 
   const handleGraphReady = useCallback((api: GraphAPI) => {
     graphApiRef.current = api;
@@ -57,7 +85,30 @@ export default function GraphView() {
     graphApiRef.current?.panToOrg(orgId);
   }, []);
 
-  let filteredNodes = graph ? [...graph.nodes] : [];
+  const handleNodeHover = useCallback((node: GraphNode | null) => {
+    setHoveredNode(node);
+  }, []);
+
+  // Ego side panel data
+  const egoNode = useMemo(() => {
+    if (!egoNodeId || !activeGraph) return null;
+    return activeGraph.nodes.find((n) => n.id === egoNodeId) || null;
+  }, [egoNodeId, activeGraph]);
+
+  const egoConnections = useMemo(() => {
+    if (!egoNodeId || !activeGraph) return [];
+    const connected = new Set<string>();
+    for (const e of activeGraph.edges) {
+      if (e.source === egoNodeId) connected.add(e.target);
+      if (e.target === egoNodeId) connected.add(e.source);
+    }
+    return activeGraph.nodes
+      .filter((n) => connected.has(n.id))
+      .sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name));
+  }, [egoNodeId, activeGraph]);
+
+  // Apply client-side filters to active graph
+  let filteredNodes = activeGraph ? [...activeGraph.nodes] : [];
 
   if (tierFilter) {
     filteredNodes = filteredNodes.filter((n) => n.tier <= tierFilter);
@@ -70,8 +121,8 @@ export default function GraphView() {
   }
 
   let nodeIds = new Set(filteredNodes.map((n) => n.id));
-  const filteredEdges = graph
-    ? graph.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
+  const filteredEdges = activeGraph
+    ? activeGraph.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
     : [];
 
   if (connectedOnly) {
@@ -84,17 +135,34 @@ export default function GraphView() {
     nodeIds = new Set(filteredNodes.map((n) => n.id));
   }
 
-  const groups = graph?.groups ?? [];
+  const groups = activeGraph?.groups ?? [];
 
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-bold tracking-wide neon-text">Network Graph</h2>
-        {graph && (
-          <span className="text-xs font-mono text-white/20">
-            {filteredNodes.length} nodes · {filteredEdges.length} edges
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          <h2 className="text-2xl font-bold tracking-wide neon-text">Network Graph</h2>
+          {isEgoMode && egoNode && (
+            <span className="px-2 py-0.5 text-xs font-mono rounded-md bg-white/5 border border-white/10 text-white/60">
+              Ego: {egoNode.name}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {isEgoMode && (
+            <button
+              onClick={exitEgoMode}
+              className="px-3 py-1.5 text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-white/60 hover:text-white/90 hover:border-neon-cyan/40 transition-all"
+            >
+              Back to Overview
+            </button>
+          )}
+          {activeGraph && (
+            <span className="text-xs font-mono text-white/20">
+              {filteredNodes.length} nodes · {filteredEdges.length} edges
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-4 mb-4 flex-wrap">
@@ -107,7 +175,20 @@ export default function GraphView() {
           connectedOnly={connectedOnly}
           onConnectedOnlyChange={setConnectedOnly}
         />
-        <GraphSimControls params={simParams} onChange={setSimParams} />
+        {isEgoMode && (
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] font-medium text-white/30 uppercase tracking-wider">Depth</label>
+            <select
+              value={egoDepth}
+              onChange={(e) => setEgoDepth(parseInt(e.target.value))}
+              className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white/70 outline-none focus:border-neon-cyan/50 transition-all appearance-none cursor-pointer"
+            >
+              <option value={1} className="bg-[#0a0a0f]">1 hop</option>
+              <option value={2} className="bg-[#0a0a0f]">2 hops</option>
+              <option value={3} className="bg-[#0a0a0f]">3 hops</option>
+            </select>
+          </div>
+        )}
         <div className="ml-auto">
           <GraphSearch
             nodes={filteredNodes}
@@ -122,28 +203,129 @@ export default function GraphView() {
       {isLoading && <p className="text-white/30 animate-pulse">Loading graph...</p>}
       {error && <p className="text-red-400">Error: {(error as Error).message}</p>}
 
-      <div ref={containerRef} className="flex-1 glass rounded-xl overflow-hidden neon-border">
-        {graph && filteredNodes.length > 0 && dimensions.width > 0 && dimensions.height > 0 ? (
-          <NetworkGraph
-            nodes={filteredNodes}
-            edges={filteredEdges}
-            groups={groups}
-            width={dimensions.width}
-            height={dimensions.height}
-            onNodeClick={handleNodeClick}
-            simParams={simParams}
-            highlightNodeId={highlightNodeId}
-            highlightOrgId={highlightOrgId}
-            onReady={handleGraphReady}
-          />
-        ) : (
-          !isLoading && (
-            <div className="h-full flex items-center justify-center">
-              <p className="text-white/20">
-                No connections yet. Add people and connections to see your network.
-              </p>
+      <div className="flex-1 flex gap-0 overflow-hidden">
+        {/* Graph container */}
+        <div
+          ref={containerRef}
+          className={`flex-1 glass rounded-xl overflow-hidden neon-border relative ${isEgoMode ? 'rounded-r-none border-r-0' : ''}`}
+        >
+          {activeGraph && filteredNodes.length > 0 && dimensions.width > 0 && dimensions.height > 0 ? (
+            <NetworkGraph
+              nodes={filteredNodes}
+              edges={filteredEdges}
+              groups={groups}
+              width={isEgoMode ? dimensions.width : dimensions.width}
+              height={dimensions.height}
+              onNodeClick={handleNodeClick}
+              onNodeHover={handleNodeHover}
+              highlightNodeId={highlightNodeId}
+              highlightOrgId={highlightOrgId}
+              egoNodeId={egoNodeId}
+              onReady={handleGraphReady}
+            />
+          ) : (
+            !isLoading && (
+              <div className="h-full flex items-center justify-center">
+                <p className="text-white/20">
+                  No connections yet. Add people and connections to see your network.
+                </p>
+              </div>
+            )
+          )}
+
+          {/* Hover tooltip */}
+          {hoveredNode && (
+            <div
+              className="absolute pointer-events-none z-50 px-3 py-2 glass rounded-lg neon-border text-xs font-mono"
+              style={{ top: 12, right: 12 }}
+            >
+              <div className="text-white/90 font-semibold">{hoveredNode.name}</div>
+              {hoveredNode.group && (
+                <div className="text-white/40 mt-0.5">{hoveredNode.group}</div>
+              )}
+              <div className="flex items-center gap-1.5 mt-1">
+                <span
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: tierColor[hoveredNode.tier] }}
+                />
+                <span className="text-white/50">
+                  T{hoveredNode.tier} — {tierLabel[hoveredNode.tier]}
+                </span>
+              </div>
             </div>
-          )
+          )}
+        </div>
+
+        {/* Ego side panel */}
+        {isEgoMode && egoNode && (
+          <div className="w-80 flex-shrink-0 glass rounded-r-xl neon-border border-l-0 overflow-y-auto">
+            <div className="p-4 border-b border-white/5">
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className="w-3 h-3 rounded-full"
+                  style={{ background: tierColor[egoNode.tier] }}
+                />
+                <h3 className="text-lg font-bold text-white/90 font-mono">{egoNode.name}</h3>
+              </div>
+              <div className="space-y-1.5 text-xs font-mono">
+                {egoNode.group && (
+                  <div className="text-white/40">{egoNode.group}</div>
+                )}
+                <div className="text-white/50">
+                  T{egoNode.tier} — {tierLabel[egoNode.tier]}
+                </div>
+                {egoNode.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {egoNode.tags.slice(0, 8).map((tag) => (
+                      <span
+                        key={tag}
+                        className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/40"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <Link
+                to={`/people/${egoNode.id}`}
+                className="mt-3 block w-full px-3 py-1.5 text-center text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-neon-cyan/80 hover:text-neon-cyan hover:border-neon-cyan/40 transition-all"
+              >
+                View Full Profile
+              </Link>
+            </div>
+
+            <div className="p-4">
+              <div className="text-[10px] font-medium text-white/30 uppercase tracking-wider mb-2">
+                Connections ({egoConnections.length})
+              </div>
+              <div className="space-y-0.5">
+                {egoConnections.map((conn) => (
+                  <button
+                    key={conn.id}
+                    onClick={() => {
+                      setEgoNodeId(conn.id);
+                      setEgoDepth(1);
+                    }}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ background: tierColor[conn.tier] }}
+                    />
+                    <span className="text-xs font-mono text-white/60 group-hover:text-white/90 truncate">
+                      {conn.name}
+                    </span>
+                    {conn.group && (
+                      <span className="text-[10px] text-white/20 ml-auto truncate max-w-[80px]">
+                        {conn.group}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>
