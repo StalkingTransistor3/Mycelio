@@ -440,14 +440,14 @@ export default function NetworkGraph({
       onNodeHover={handleNodeHover}
       onRenderFramePre={onRenderFramePre}
       nodeLabel={() => ''}
-      cooldownTicks={200}
-      d3AlphaDecay={0.015}
-      d3VelocityDecay={0.25}
-      warmupTicks={100}
+      cooldownTicks={100}
+      d3AlphaDecay={0.04}
+      d3VelocityDecay={0.4}
+      warmupTicks={80}
+      d3AlphaMin={0.001}
       enableNodeDrag={true}
       enableZoomInteraction={true}
       enablePanInteraction={true}
-      onEngineStop={() => {}}
     />
   );
 }
