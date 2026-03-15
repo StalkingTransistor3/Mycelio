@@ -24,8 +24,8 @@ const tierLabel: Record<number, string> = {
 };
 
 export default function GraphView() {
-  // Smart default: load tier 1-2 + limit 200 most connected
-  const { data: overviewGraph, isLoading, error } = useGraph({ tier: 2, limit: 200 });
+  // Smart default: load tier 1-3 + limit 500 most connected
+  const { data: overviewGraph, isLoading, error } = useGraph({ tier: 3, limit: 500 });
   const [tierFilter, setTierFilter] = useState<number | null>(null);
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [connectedOnly, setConnectedOnly] = useState(false);
