@@ -63,8 +63,10 @@ export default function NetworkGraph({
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const orgCentersRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const orgBaseAnglesRef = useRef<Map<string, number>>(new Map());
   const nodeSelectionsRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
   const linkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
+  const animFrameRef = useRef<number | null>(null);
 
   // Pan to a specific node
   const panToNode = useCallback((nodeId: string) => {
@@ -129,14 +131,17 @@ export default function NetworkGraph({
     const centerY = height / 2;
     const clusterRadius = Math.min(width, height) * 0.32;
 
+    const baseAngles = new Map<string, number>();
     orgIds.forEach((id, i) => {
       const angle = (2 * Math.PI * i) / orgIds.length - Math.PI / 2;
+      baseAngles.set(id, angle);
       orgCenters.set(id, {
         x: centerX + clusterRadius * Math.cos(angle),
         y: centerY + clusterRadius * Math.sin(angle),
       });
     });
     orgCentersRef.current = orgCenters;
+    orgBaseAnglesRef.current = baseAngles;
 
     // Assign color per org
     const orgColorMap = new Map<string, string>();
@@ -382,9 +387,39 @@ export default function NetworkGraph({
     // Expose API
     onReady?.({ panToNode, panToOrg });
 
+    // Ambient orbit animation — slowly rotate cluster centers
+    const orbitStart = performance.now();
+    const ORBIT_SPEED = 0.00003; // radians per ms (~3.5 min per revolution)
+
+    const animateOrbit = (now: number) => {
+      const elapsed = now - orbitStart;
+      const angleOffset = elapsed * ORBIT_SPEED;
+
+      // Update force targets to orbited positions
+      for (const [orgId, baseAngle] of baseAngles) {
+        const newAngle = baseAngle + angleOffset;
+        orgCenters.set(orgId, {
+          x: centerX + clusterRadius * Math.cos(newAngle),
+          y: centerY + clusterRadius * Math.sin(newAngle),
+        });
+      }
+
+      // Nudge simulation at very low alpha to keep it alive
+      if (simulation.alpha() < 0.015) {
+        simulation.alpha(0.015).restart();
+      }
+
+      animFrameRef.current = requestAnimationFrame(animateOrbit);
+    };
+    animFrameRef.current = requestAnimationFrame(animateOrbit);
+
     return () => {
       simulation.stop();
       simRef.current = null;
+      if (animFrameRef.current != null) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, groups, width, height, onNodeClick]);
@@ -459,8 +494,10 @@ export default function NetworkGraph({
   return (
     <svg
       ref={svgRef}
-      width={width}
-      height={height}
+      width="100%"
+      height="100%"
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="xMidYMid meet"
       className="bg-transparent"
     />
   );

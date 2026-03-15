@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGraph } from '../hooks/useGraph.js';
 import NetworkGraph from '../graph/NetworkGraph.js';
@@ -18,7 +18,20 @@ export default function GraphView() {
   const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null);
   const [highlightOrgId, setHighlightOrgId] = useState<string | null>(null);
   const graphApiRef = useRef<GraphAPI | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setDimensions({ width: Math.floor(width), height: Math.floor(height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
@@ -109,30 +122,30 @@ export default function GraphView() {
       {isLoading && <p className="text-white/30 animate-pulse">Loading graph...</p>}
       {error && <p className="text-red-400">Error: {(error as Error).message}</p>}
 
-      {graph && filteredNodes.length > 0 ? (
-        <div className="flex-1 glass rounded-xl overflow-hidden neon-border">
+      <div ref={containerRef} className="flex-1 glass rounded-xl overflow-hidden neon-border">
+        {graph && filteredNodes.length > 0 && dimensions.width > 0 && dimensions.height > 0 ? (
           <NetworkGraph
             nodes={filteredNodes}
             edges={filteredEdges}
             groups={groups}
-            width={1200}
-            height={700}
+            width={dimensions.width}
+            height={dimensions.height}
             onNodeClick={handleNodeClick}
             simParams={simParams}
             highlightNodeId={highlightNodeId}
             highlightOrgId={highlightOrgId}
             onReady={handleGraphReady}
           />
-        </div>
-      ) : (
-        !isLoading && (
-          <div className="flex-1 flex items-center justify-center glass rounded-xl">
-            <p className="text-white/20">
-              No connections yet. Add people and connections to see your network.
-            </p>
-          </div>
-        )
-      )}
+        ) : (
+          !isLoading && (
+            <div className="h-full flex items-center justify-center">
+              <p className="text-white/20">
+                No connections yet. Add people and connections to see your network.
+              </p>
+            </div>
+          )
+        )}
+      </div>
     </div>
   );
 }
