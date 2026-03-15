@@ -384,12 +384,21 @@ export default function NetworkGraph({
     ctx.stroke();
   }, [highlightNodeId]);
 
-  // Hover — only update ref, don't trigger parent re-render on every mouse move
+  // Hover — freeze simulation on hover so nodes stop moving
   const handleNodeHover = useCallback((node: any) => {
     const id = node ? (node as FGNode).id : null;
     if (hoveredNodeRef.current !== id) {
       hoveredNodeRef.current = id;
-      // Only notify parent for tooltip if actually changed
+      const fg = fgRef.current;
+      if (fg) {
+        if (node) {
+          // Freeze: kill all velocity and stop simulation
+          fg.pauseAnimation();
+        } else {
+          // Unfreeze when mouse leaves node
+          fg.resumeAnimation();
+        }
+      }
       onNodeHover?.(node as GraphNode | null);
     }
   }, [onNodeHover]);
