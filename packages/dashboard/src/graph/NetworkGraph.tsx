@@ -480,13 +480,10 @@ export default function NetworkGraph({
     const fg = fgRef.current;
     if (!fg) return;
     if (frozen && !frozenRef.current) {
-      // Stop the d3 simulation but DON'T pause the animation/render loop
-      // This keeps zoom, pan, click, hover all working
-      fg.d3Force('charge', null);
-      fg.d3Force('link', null);
-      fg.d3Force('center', null);
-      fg.d3Force('collide', null);
-      // Kill all node velocities so they stop drifting
+      // Freeze: pin all nodes in place and stop simulation ticks.
+      // Do NOT set any d3Force to null — that destroys forces and blacks out the canvas.
+      // Instead, pin nodes with fx/fy and set cooldownTicks to 0 so the simulation
+      // stops iterating while the canvas render loop stays alive for zoom/pan/click.
       const nodes = fg.graphData()?.nodes || [];
       for (const n of nodes) {
         (n as any).vx = 0;
@@ -494,20 +491,17 @@ export default function NetworkGraph({
         (n as any).fx = (n as any).x;
         (n as any).fy = (n as any).y;
       }
+      fg.cooldownTicks(0);
       frozenRef.current = true;
     } else if (!frozen && frozenRef.current) {
-      // Restore forces — unpin all nodes
+      // Unfreeze: unpin all nodes and restore simulation
       const nodes = fg.graphData()?.nodes || [];
       for (const n of nodes) {
         (n as any).fx = undefined;
         (n as any).fy = undefined;
       }
-      // Re-apply forces
-      handleEngineInit(fg);
-      if (simParams) {
-        // Re-apply simParams too
-        fg.d3Force('collide', d3.forceCollide(simParams.collisionRadius));
-      }
+      // Restore cooldown and reheat the simulation
+      fg.cooldownTicks(100);
       fg.d3ReheatSimulation();
       frozenRef.current = false;
     }
