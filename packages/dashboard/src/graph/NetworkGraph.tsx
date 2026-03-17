@@ -5,6 +5,7 @@ import * as d3 from 'd3';
 import type { GraphNode, GraphEdge, GraphGroup } from '@mycelio/shared';
 import type { SimParams } from './GraphSimControls.js';
 import type { Coordinates } from 'sigma/types';
+import { EdgeClampedProgram } from 'sigma/rendering';
 
 export interface GraphAPI {
   panToNode: (nodeId: string) => void;
@@ -462,6 +463,7 @@ export default function NetworkGraph({
               context: e.context,
               color: 'rgba(0, 240, 255, 0.06)',
               size: 0.3,
+              type: 'curved',
             });
           } catch {
             // Skip duplicate edges
@@ -501,6 +503,10 @@ export default function NetworkGraph({
 
       sigma = new Sigma(graph, container, {
         allowInvalidContainer: true,
+        defaultEdgeType: 'curved',
+        edgeProgramClasses: {
+          curved: EdgeClampedProgram,
+        },
         renderLabels: true,
         labelFont: "'JetBrains Mono', 'Fira Code', monospace",
         labelSize: 10,
@@ -512,6 +518,37 @@ export default function NetworkGraph({
         defaultNodeColor: '#555566',
         defaultEdgeColor: 'rgba(0, 240, 255, 0.06)',
         minEdgeThickness: 0.3,
+        // Custom hover drawing for cyberpunk glow
+        defaultDrawNodeHover: (context, data, settings) => {
+          const size = data.size || 5;
+          // Outer glow ring
+          context.beginPath();
+          context.arc(data.x, data.y, size + 6, 0, 2 * Math.PI);
+          context.fillStyle = data.color + '20';
+          context.fill();
+          // Inner ring
+          context.beginPath();
+          context.arc(data.x, data.y, size + 3, 0, 2 * Math.PI);
+          context.strokeStyle = data.color;
+          context.lineWidth = 1.5;
+          context.stroke();
+          // Label background
+          if (data.label) {
+            const fontSize = settings.labelSize || 10;
+            context.font = `${fontSize}px ${settings.labelFont}`;
+            const textWidth = context.measureText(data.label).width;
+            context.fillStyle = 'rgba(10, 10, 15, 0.85)';
+            const padding = 4;
+            context.fillRect(
+              data.x + size + 3 - padding,
+              data.y - fontSize / 2 - padding,
+              textWidth + padding * 2,
+              fontSize + padding * 2
+            );
+            context.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            context.fillText(data.label, data.x + size + 3, data.y + fontSize / 3);
+          }
+        },
         stagePadding: 30,
         zoomingRatio: 1.5,
         itemSizesReference: 'positions',
