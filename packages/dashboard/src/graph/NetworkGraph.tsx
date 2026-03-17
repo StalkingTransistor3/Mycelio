@@ -1,8 +1,10 @@
-import { useEffect, useRef, useCallback, useMemo } from 'react';
-import ForceGraph2D from 'react-force-graph-2d';
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
+import Graph from 'graphology';
+import Sigma from 'sigma';
 import * as d3 from 'd3';
 import type { GraphNode, GraphEdge, GraphGroup } from '@mycelio/shared';
 import type { SimParams } from './GraphSimControls.js';
+import type { Coordinates } from 'sigma/types';
 
 export interface GraphAPI {
   panToNode: (nodeId: string) => void;
@@ -39,7 +41,6 @@ const ORG_COLORS = [
   '#dd44ff', '#ffdd44', '#44ddff', '#ff4488', '#88ddff',
 ];
 
-// Pre-parse hex color to rgba for fast string building
 function hexToRgb(hex: string): [number, number, number] {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -47,27 +48,45 @@ function hexToRgb(hex: string): [number, number, number] {
   return [r, g, b];
 }
 
-interface FGNode extends GraphNode {
-  x?: number;
-  y?: number;
-  vx?: number;
-  vy?: number;
-  __connections?: Set<string>;
-  __orgColorRgb?: [number, number, number];
-  __color?: string;
+/** Catmull-Rom spline through convex hull points for smooth org boundaries */
+function catmullRomSpline(points: [number, number][], tension = 0.5, segments = 8): [number, number][] {
+  if (points.length < 3) return points;
+  const result: [number, number][] = [];
+  const n = points.length;
+
+  for (let i = 0; i < n; i++) {
+    const p0 = points[(i - 1 + n) % n];
+    const p1 = points[i];
+    const p2 = points[(i + 1) % n];
+    const p3 = points[(i + 2) % n];
+
+    for (let t = 0; t < segments; t++) {
+      const s = t / segments;
+      const s2 = s * s;
+      const s3 = s2 * s;
+
+      const x = 0.5 * (
+        (2 * p1[0]) +
+        (-p0[0] + p2[0]) * s * tension +
+        (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * s2 * tension +
+        (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * s3 * tension
+      );
+      const y = 0.5 * (
+        (2 * p1[1]) +
+        (-p0[1] + p2[1]) * s * tension +
+        (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * s2 * tension +
+        (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * s3 * tension
+      );
+      result.push([x, y]);
+    }
+  }
+  return result;
 }
 
-interface FGLink {
-  source: string | FGNode;
-  target: string | FGNode;
-  strength: string;
-  context: string | null;
-}
-
-// Cached hull data to avoid recomputing every frame
 interface OrgHullCache {
   orgId: string;
   hull: [number, number][] | null;
+  smoothHull: [number, number][] | null;
   cx: number;
   cy: number;
   minY: number;
@@ -75,7 +94,6 @@ interface OrgHullCache {
   colorRgb: [number, number, number];
   name: string;
   count: number;
-  // For 2-node orgs
   isEllipse?: boolean;
   mx?: number;
   my?: number;
@@ -84,16 +102,47 @@ interface OrgHullCache {
   angle?: number;
 }
 
+// Store node data for lookups
+interface NodeData {
+  graphNode: GraphNode;
+  color: string;
+  orgColorRgb?: [number, number, number];
+  connections: Set<string>;
+}
+
 export default function NetworkGraph({
   nodes, edges, groups, width, height, onNodeClick, onNodeHover,
   highlightNodeId, highlightOrgId, egoNodeId, onReady,
   simParams, frozen, showLabels, showEdges, showHulls, onFrozenChange,
 }: Props) {
-  const fgRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sigmaRef = useRef<Sigma | null>(null);
+  const graphRef = useRef<Graph | null>(null);
+  const workerRef = useRef<Worker | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
-  const nodesRef = useRef<FGNode[]>([]);
   const hullCacheRef = useRef<OrgHullCache[]>([]);
   const hullFrameCounter = useRef(0);
+  const nodeDataMapRef = useRef<Map<string, NodeData>>(new Map());
+  const canvasLayerRef = useRef<HTMLCanvasElement | null>(null);
+  const draggedNodeRef = useRef<string | null>(null);
+  const prevDataKeyRef = useRef<string>('');
+  const [minimapVisible] = useState(true);
+  const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const minimapFrameRef = useRef(0);
+  
+  // Refs for values used inside sigma reducers (closures won't re-capture on prop changes)
+  const highlightNodeIdRef = useRef(highlightNodeId);
+  highlightNodeIdRef.current = highlightNodeId;
+  const highlightOrgIdRef = useRef(highlightOrgId);
+  highlightOrgIdRef.current = highlightOrgId;
+  const egoNodeIdRef = useRef(egoNodeId);
+  egoNodeIdRef.current = egoNodeId;
+  const showLabelsRef = useRef(showLabels);
+  showLabelsRef.current = showLabels;
+  const showEdgesRef = useRef(showEdges);
+  showEdgesRef.current = showEdges;
+  const showHullsRef = useRef(showHulls);
+  showHullsRef.current = showHulls;
 
   // Build org color map
   const orgColorMap = useMemo(() => {
@@ -102,7 +151,6 @@ export default function NetworkGraph({
     return map;
   }, [groups]);
 
-  // Pre-compute RGB versions
   const orgColorRgbMap = useMemo(() => {
     const map = new Map<string, [number, number, number]>();
     for (const [id, hex] of orgColorMap) map.set(id, hexToRgb(hex));
@@ -127,75 +175,53 @@ export default function NetworkGraph({
     return map;
   }, [edges]);
 
-  // Stable graph data
-  const graphDataRef = useRef<{ nodes: FGNode[]; links: FGLink[] }>({ nodes: [], links: [] });
-  const prevNodesRef = useRef<GraphNode[]>([]);
-  const prevEdgesRef = useRef<GraphEdge[]>([]);
-
-  if (nodes !== prevNodesRef.current || edges !== prevEdgesRef.current) {
-    prevNodesRef.current = nodes;
-    prevEdgesRef.current = edges;
-
-    const fgNodes: FGNode[] = nodes.map((n) => {
-      const orgHex = n.organizationId ? orgColorMap.get(n.organizationId) : null;
-      return {
-        ...n,
-        __connections: connectionMap.get(n.id) || new Set(),
-        __orgColorRgb: n.organizationId ? orgColorRgbMap.get(n.organizationId) : undefined,
-        __color: orgHex || tierColor[n.tier] || '#555566',
-      };
-    });
-    nodesRef.current = fgNodes;
-
-    const fgLinks: FGLink[] = edges.map((e) => ({
-      source: e.source, target: e.target, strength: e.strength, context: e.context,
-    }));
-
-    graphDataRef.current = { nodes: fgNodes, links: fgLinks };
-    hullCacheRef.current = []; // invalidate hull cache
-  }
-
-  useEffect(() => {
-    for (const n of nodesRef.current) {
-      n.__connections = connectionMap.get(n.id) || new Set();
-    }
-  }, [connectionMap]);
-
-  const graphData = graphDataRef.current;
-
+  // Pan to node
   const panToNode = useCallback((nodeId: string) => {
-    const fg = fgRef.current;
-    if (!fg) return;
-    const node = nodesRef.current.find((n) => n.id === nodeId);
-    if (node?.x != null && node?.y != null) { fg.centerAt(node.x, node.y, 600); fg.zoom(2, 600); }
+    const sigma = sigmaRef.current;
+    const graph = graphRef.current;
+    if (!sigma || !graph || !graph.hasNode(nodeId)) return;
+    const attrs = graph.getNodeAttributes(nodeId);
+    const camera = sigma.getCamera();
+    camera.animate({ x: attrs.x, y: attrs.y, ratio: 0.5 }, { duration: 600 });
   }, []);
 
   const panToOrg = useCallback((orgId: string) => {
-    const fg = fgRef.current;
-    if (!fg) return;
-    const orgNodes = nodesRef.current.filter((n) => n.organizationId === orgId);
-    if (orgNodes.length === 0) return;
-    const cx = orgNodes.reduce((s, n) => s + (n.x ?? 0), 0) / orgNodes.length;
-    const cy = orgNodes.reduce((s, n) => s + (n.y ?? 0), 0) / orgNodes.length;
-    fg.centerAt(cx, cy, 600); fg.zoom(1.5, 600);
+    const sigma = sigmaRef.current;
+    const graph = graphRef.current;
+    if (!sigma || !graph) return;
+    let cx = 0, cy = 0, count = 0;
+    graph.forEachNode((id, attrs) => {
+      const nd = nodeDataMapRef.current.get(id);
+      if (nd?.graphNode.organizationId === orgId) {
+        cx += attrs.x; cy += attrs.y; count++;
+      }
+    });
+    if (count > 0) {
+      const camera = sigma.getCamera();
+      camera.animate({ x: cx / count, y: cy / count, ratio: 0.7 }, { duration: 600 });
+    }
   }, []);
 
   useEffect(() => { onReady?.({ panToNode, panToOrg }); }, [onReady, panToNode, panToOrg]);
 
-  // Rebuild hull cache every 30 frames instead of every frame
+  // Build hull cache
   const rebuildHullCache = useCallback(() => {
+    const graph = graphRef.current;
+    if (!graph) return;
+
     const orgPositions = new Map<string, { x: number; y: number }[]>();
-    for (const n of nodesRef.current) {
-      if (n.organizationId && n.x != null && n.y != null) {
-        if (!orgPositions.has(n.organizationId)) orgPositions.set(n.organizationId, []);
-        orgPositions.get(n.organizationId)!.push({ x: n.x, y: n.y });
+    graph.forEachNode((id, attrs) => {
+      const nd = nodeDataMapRef.current.get(id);
+      if (nd?.graphNode.organizationId && attrs.x != null && attrs.y != null) {
+        const orgId = nd.graphNode.organizationId;
+        if (!orgPositions.has(orgId)) orgPositions.set(orgId, []);
+        orgPositions.get(orgId)!.push({ x: attrs.x, y: attrs.y });
       }
-    }
+    });
 
     const hulls: OrgHullCache[] = [];
     for (const [orgId, positions] of orgPositions) {
       if (positions.length < 2) continue;
-
       const color = orgColorMap.get(orgId) || '#ffffff';
       const colorRgb = orgColorRgbMap.get(orgId) || [255, 255, 255] as [number, number, number];
       const name = orgNameMap.get(orgId) || '';
@@ -212,7 +238,7 @@ export default function NetworkGraph({
         const dy = p2.y - p1.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         hulls.push({
-          orgId, hull: null, cx, cy, minY, color, colorRgb, name, count: 2,
+          orgId, hull: null, smoothHull: null, cx, cy, minY, color, colorRgb, name, count: 2,
           isEllipse: true, mx, my, rx: dist / 2 + pad, ry: pad,
           angle: Math.atan2(dy, dx),
         });
@@ -224,40 +250,46 @@ export default function NetworkGraph({
           return [p.x + (dx / dist) * pad, p.y + (dy / dist) * pad];
         });
         const hull = d3.polygonHull(expanded);
-        hulls.push({ orgId, hull, cx, cy, minY: minY - pad - 5, color, colorRgb, name, count: positions.length });
+        const smoothHull = hull && hull.length >= 3 ? catmullRomSpline(hull, 1.0, 6) : hull;
+        hulls.push({ orgId, hull, smoothHull, cx, cy, minY: minY - pad - 5, color, colorRgb, name, count: positions.length });
       }
     }
     hullCacheRef.current = hulls;
   }, [orgColorMap, orgColorRgbMap, orgNameMap]);
 
-  // Draw org backgrounds from cache
-  const onRenderFramePre = useCallback((ctx: CanvasRenderingContext2D, globalScale: number) => {
-    // Skip hull drawing if showHulls is false
-    if (showHulls === false) return;
+  // Draw hulls on canvas overlay
+  const drawHulls = useCallback((ctx: CanvasRenderingContext2D, sigmaInstance: Sigma) => {
+    if (showHullsRef.current === false) return;
 
-    // Rebuild hull cache every 30 frames
     hullFrameCounter.current++;
     if (hullFrameCounter.current % 30 === 0 || hullCacheRef.current.length === 0) {
       rebuildHullCache();
     }
 
-    // Only draw hulls for orgs with 3+ members when zoomed out (perf)
-    const minMembers = globalScale < 0.5 ? 5 : globalScale < 0.8 ? 3 : 2;
+    const camera = sigmaInstance.getCamera();
+    const ratio = camera.ratio;
+    const minMembers = ratio > 2 ? 5 : ratio > 1.25 ? 3 : 2;
 
     for (const h of hullCacheRef.current) {
       if (h.count < minMembers) continue;
 
       const [r, g, b] = h.colorRgb;
-      const isHl = highlightOrgId === h.orgId;
+      const isHl = highlightOrgIdRef.current === h.orgId;
       const fillAlpha = isHl ? 0.09 : 0.03;
       const strokeAlpha = isHl ? 0.25 : 0.1;
 
       if (h.isEllipse) {
+        // Convert graph coords to viewport coords
+        const center = sigmaInstance.graphToViewport({ x: h.mx!, y: h.my! } as Coordinates);
+        const edgePoint = sigmaInstance.graphToViewport({ x: h.mx! + h.rx!, y: h.my! + h.ry! } as Coordinates);
+        const rxScreen = Math.abs(edgePoint.x - center.x);
+        const ryScreen = Math.abs(edgePoint.y - center.y);
+
         ctx.save();
-        ctx.translate(h.mx!, h.my!);
+        ctx.translate(center.x, center.y);
         ctx.rotate(h.angle!);
         ctx.beginPath();
-        ctx.ellipse(0, 0, h.rx!, h.ry!, 0, 0, 2 * Math.PI);
+        ctx.ellipse(0, 0, rxScreen, ryScreen, 0, 0, 2 * Math.PI);
         ctx.fillStyle = `rgba(${r},${g},${b},${fillAlpha})`;
         ctx.fill();
         ctx.strokeStyle = `rgba(${r},${g},${b},${strokeAlpha})`;
@@ -266,10 +298,15 @@ export default function NetworkGraph({
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
-      } else if (h.hull) {
+      } else if (h.smoothHull) {
+        const points = h.smoothHull;
         ctx.beginPath();
-        ctx.moveTo(h.hull[0][0], h.hull[0][1]);
-        for (let i = 1; i < h.hull.length; i++) ctx.lineTo(h.hull[i][0], h.hull[i][1]);
+        const first = sigmaInstance.graphToViewport({ x: points[0][0], y: points[0][1] } as Coordinates);
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < points.length; i++) {
+          const p = sigmaInstance.graphToViewport({ x: points[i][0], y: points[i][1] } as Coordinates);
+          ctx.lineTo(p.x, p.y);
+        }
         ctx.closePath();
         ctx.fillStyle = `rgba(${r},${g},${b},${fillAlpha})`;
         ctx.fill();
@@ -280,258 +317,495 @@ export default function NetworkGraph({
         ctx.setLineDash([]);
       }
 
-      // Org label — scale inversely with zoom
+      // Org label
       const baseFontSize = h.count >= 5 ? 14 : h.count >= 3 ? 12 : 10;
-      const fontSize = baseFontSize / globalScale;
-      if (fontSize >= 3) {
-        ctx.font = `600 ${fontSize}px 'JetBrains Mono', 'Fira Code', monospace`;
+      const fontSize = baseFontSize / ratio;
+      if (fontSize >= 3 && fontSize < 60) {
+        const labelPos = sigmaInstance.graphToViewport({ x: h.cx, y: h.minY } as Coordinates);
+        ctx.font = `600 ${Math.max(8, Math.min(fontSize, 24))}px 'JetBrains Mono', 'Fira Code', monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillStyle = `rgba(${r},${g},${b},${isHl ? 0.7 : 0.45})`;
-        ctx.fillText(h.name, h.cx, h.minY);
+        ctx.fillText(h.name, labelPos.x, labelPos.y);
       }
     }
-  }, [rebuildHullCache, highlightOrgId, showHulls]);
+  }, [rebuildHullCache]);
 
-  // Node rendering — NO shadowBlur (that was the perf killer)
-  const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-    const n = node as FGNode;
-    const r = tierRadius[n.tier] || 5;
-    const color = n.__color || '#555566';
-    const x = n.x ?? 0;
-    const y = n.y ?? 0;
+  // Draw minimap
+  const drawMinimap = useCallback(() => {
+    const sigma = sigmaRef.current;
+    const graph = graphRef.current;
+    const canvas = minimapCanvasRef.current;
+    if (!sigma || !graph || !canvas || !minimapVisible) return;
 
-    const hovered = hoveredNodeRef.current;
-    const isHovered = hovered === n.id;
-    const isHighlighted = highlightNodeId === n.id;
-    const isEgoCenter = egoNodeId === n.id;
-    const isConnectedToHovered = hovered ? (n.__connections?.has(hovered) || false) : false;
-    const isConnectedToHighlight = highlightNodeId ? (n.__connections?.has(highlightNodeId) || false) : false;
-    const isOrgHighlighted = highlightOrgId ? n.organizationId === highlightOrgId : false;
-    const hasAnyHighlight = !!(highlightNodeId || highlightOrgId || hovered);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    let alpha = 0.7;
-    let nodeR = r;
+    const mw = canvas.width;
+    const mh = canvas.height;
 
-    if (hasAnyHighlight) {
-      if (isHovered || isHighlighted || isEgoCenter) { alpha = 1; nodeR = r * 1.4; }
-      else if (isConnectedToHovered || isConnectedToHighlight || isOrgHighlighted) { alpha = 0.85; }
-      else { alpha = 0.12; }
-    }
+    ctx.clearRect(0, 0, mw, mh);
+    ctx.fillStyle = 'rgba(10, 10, 15, 0.85)';
+    ctx.fillRect(0, 0, mw, mh);
 
-    // Soft glow — just a larger translucent circle, no shadowBlur
-    if (alpha > 0.5 && (n.tier <= 2 || isHovered || isHighlighted || isEgoCenter)) {
+    // Border
+    ctx.strokeStyle = 'rgba(0, 240, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0, 0, mw, mh);
+
+    // Compute graph bounding box
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    graph.forEachNode((_, attrs) => {
+      if (attrs.x < minX) minX = attrs.x;
+      if (attrs.x > maxX) maxX = attrs.x;
+      if (attrs.y < minY) minY = attrs.y;
+      if (attrs.y > maxY) maxY = attrs.y;
+    });
+
+    if (!isFinite(minX)) return;
+
+    const padX = (maxX - minX) * 0.1 || 50;
+    const padY = (maxY - minY) * 0.1 || 50;
+    minX -= padX; maxX += padX; minY -= padY; maxY += padY;
+    const rangeX = maxX - minX || 1;
+    const rangeY = maxY - minY || 1;
+
+    const toMini = (x: number, y: number): [number, number] => [
+      ((x - minX) / rangeX) * mw,
+      ((y - minY) / rangeY) * mh,
+    ];
+
+    // Draw edges faintly
+    graph.forEachEdge((_, attrs, src, tgt, srcAttrs, tgtAttrs) => {
+      const [x1, y1] = toMini(srcAttrs.x, srcAttrs.y);
+      const [x2, y2] = toMini(tgtAttrs.x, tgtAttrs.y);
       ctx.beginPath();
-      ctx.arc(x, y, nodeR + 4, 0, 2 * Math.PI);
-      ctx.fillStyle = color + '20';
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.04)';
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    });
+
+    // Draw nodes
+    graph.forEachNode((id, attrs) => {
+      const nd = nodeDataMapRef.current.get(id);
+      const [mx, my] = toMini(attrs.x, attrs.y);
+      ctx.beginPath();
+      ctx.arc(mx, my, 1.5, 0, 2 * Math.PI);
+      ctx.fillStyle = nd?.color || '#555566';
       ctx.fill();
+    });
+
+    // Draw viewport rectangle
+    // Get the viewport corners in graph coordinates
+    const topLeft = sigma.viewportToGraph({ x: 0, y: 0 });
+    const bottomRight = sigma.viewportToGraph({ x: width, y: height });
+
+    const [vx1, vy1] = toMini(topLeft.x, topLeft.y);
+    const [vx2, vy2] = toMini(bottomRight.x, bottomRight.y);
+
+    ctx.strokeStyle = 'rgba(0, 240, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(
+      Math.min(vx1, vx2),
+      Math.min(vy1, vy2),
+      Math.abs(vx2 - vx1),
+      Math.abs(vy2 - vy1)
+    );
+  }, [width, height, minimapVisible]);
+
+  // Initialize sigma + worker
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || width <= 0 || height <= 0) return;
+
+    // Data key to detect changes
+    const dataKey = `${nodes.length}-${edges.length}-${nodes.map(n => n.id).join(',')}`;
+    const isNewData = dataKey !== prevDataKeyRef.current;
+    prevDataKeyRef.current = dataKey;
+
+    // Create/update graphology graph
+    let graph = graphRef.current;
+    if (!graph || isNewData) {
+      graph = new Graph();
+      graphRef.current = graph;
+
+      const nodeDataMap = new Map<string, NodeData>();
+      
+      for (const n of nodes) {
+        const orgHex = n.organizationId ? orgColorMap.get(n.organizationId) : null;
+        const color = orgHex || tierColor[n.tier] || '#555566';
+        const connections = connectionMap.get(n.id) || new Set();
+        
+        nodeDataMap.set(n.id, {
+          graphNode: n,
+          color,
+          orgColorRgb: n.organizationId ? orgColorRgbMap.get(n.organizationId) : undefined,
+          connections,
+        });
+
+        graph.addNode(n.id, {
+          x: Math.random() * 1000 - 500,
+          y: Math.random() * 1000 - 500,
+          size: tierRadius[n.tier] || 5,
+          color,
+          label: n.name,
+        });
+      }
+
+      for (const e of edges) {
+        if (graph.hasNode(e.source) && graph.hasNode(e.target)) {
+          try {
+            graph.addEdge(e.source, e.target, {
+              strength: e.strength,
+              context: e.context,
+              color: 'rgba(0, 240, 255, 0.06)',
+              size: 0.3,
+            });
+          } catch {
+            // Skip duplicate edges
+          }
+        }
+      }
+
+      nodeDataMapRef.current = nodeDataMap;
     }
 
-    // Node circle
-    ctx.beginPath();
-    ctx.arc(x, y, nodeR, 0, 2 * Math.PI);
-    ctx.fillStyle = color;
-    ctx.globalAlpha = alpha;
-    ctx.fill();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = (isHighlighted || isEgoCenter) ? 2 : 0.8;
-    ctx.stroke();
+    // Create sigma instance if needed
+    let sigma = sigmaRef.current;
+    if (!sigma) {
+      // Create canvas overlay for hulls
+      const hullCanvas = document.createElement('canvas');
+      hullCanvas.width = width;
+      hullCanvas.height = height;
+      hullCanvas.style.position = 'absolute';
+      hullCanvas.style.top = '0';
+      hullCanvas.style.left = '0';
+      hullCanvas.style.pointerEvents = 'none';
+      hullCanvas.style.zIndex = '5';
+      container.style.position = 'relative';
+      canvasLayerRef.current = hullCanvas;
 
-    // Label
-    const showLabel = showLabels || globalScale > 1.2 || isHovered || isHighlighted || isEgoCenter || isConnectedToHovered || isConnectedToHighlight;
-    if (showLabel) {
-      const fontSize = Math.max(10 / globalScale, 2.5);
-      ctx.font = `${fontSize}px 'JetBrains Mono', 'Fira Code', monospace`;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = `rgba(255,255,255,${alpha * 0.9})`;
-      ctx.fillText(n.name, x + nodeR + 3, y);
+      // Create minimap canvas
+      const minimapCanvas = document.createElement('canvas');
+      minimapCanvas.width = 180;
+      minimapCanvas.height = 120;
+      minimapCanvas.style.position = 'absolute';
+      minimapCanvas.style.bottom = '12px';
+      minimapCanvas.style.right = '12px';
+      minimapCanvas.style.zIndex = '10';
+      minimapCanvas.style.borderRadius = '8px';
+      minimapCanvas.style.pointerEvents = 'none';
+      minimapCanvasRef.current = minimapCanvas;
+
+      sigma = new Sigma(graph, container, {
+        allowInvalidContainer: true,
+        renderLabels: true,
+        labelFont: "'JetBrains Mono', 'Fira Code', monospace",
+        labelSize: 10,
+        labelWeight: '400',
+        labelColor: { color: 'rgba(255, 255, 255, 0.8)' },
+        labelDensity: 0.5,
+        labelGridCellSize: 100,
+        labelRenderedSizeThreshold: 4,
+        defaultNodeColor: '#555566',
+        defaultEdgeColor: 'rgba(0, 240, 255, 0.06)',
+        minEdgeThickness: 0.3,
+        stagePadding: 30,
+        zoomingRatio: 1.5,
+        itemSizesReference: 'positions',
+        autoRescale: false,
+        autoCenter: false,
+        // Node reducer for highlighting / LOD
+        nodeReducer: (nodeId: string, data: Record<string, unknown>) => {
+          const nd = nodeDataMapRef.current.get(nodeId);
+          const hovered = hoveredNodeRef.current;
+          const highlighted = highlightNodeIdRef.current;
+          const highlightOrg = highlightOrgIdRef.current;
+          const egoCenter = egoNodeIdRef.current;
+          const camera = sigmaRef.current?.getCamera();
+          const ratio = camera?.ratio || 1;
+
+          const isHovered = hovered === nodeId;
+          const isHighlighted = highlighted === nodeId;
+          const isEgoCenter = egoCenter === nodeId;
+          const isConnectedToHovered = hovered ? (nd?.connections.has(hovered) || false) : false;
+          const isConnectedToHighlight = highlighted ? (nd?.connections.has(highlighted) || false) : false;
+          const isOrgHighlighted = highlightOrg ? nd?.graphNode.organizationId === highlightOrg : false;
+          const hasAnyHighlight = !!(highlighted || highlightOrg || hovered);
+
+          let alpha = 0.7;
+          let size = (data.size as number) || 5;
+
+          if (hasAnyHighlight) {
+            if (isHovered || isHighlighted || isEgoCenter) { alpha = 1; size *= 1.4; }
+            else if (isConnectedToHovered || isConnectedToHighlight || isOrgHighlighted) { alpha = 0.85; }
+            else { alpha = 0.12; }
+          }
+
+          // LOD: hide labels when zoomed out
+          const tier = nd?.graphNode.tier || 5;
+          let showLabel = showLabelsRef.current || isHovered || isHighlighted || isEgoCenter || isConnectedToHovered || isConnectedToHighlight;
+          if (!showLabel) {
+            if (ratio < 0.5) showLabel = tier <= 1;
+            else if (ratio < 1.0) showLabel = tier <= 2;
+            else showLabel = true;
+          }
+
+          const color = nd?.color || '#555566';
+          const [r, g, b] = hexToRgb(color);
+
+          return {
+            ...data,
+            size,
+            color: `rgba(${r}, ${g}, ${b}, ${alpha})`,
+            label: showLabel ? (data.label as string) : '',
+            forceLabel: isHovered || isHighlighted || isEgoCenter,
+            zIndex: isHovered || isHighlighted || isEgoCenter ? 2 : isConnectedToHovered || isConnectedToHighlight ? 1 : 0,
+          };
+        },
+        // Edge reducer for highlighting
+        edgeReducer: (edgeId: string, data: Record<string, unknown>) => {
+          if (showEdgesRef.current === false) {
+            return { ...data, hidden: true };
+          }
+
+          const graph = graphRef.current;
+          if (!graph) return data;
+
+          const src = graph.source(edgeId);
+          const tgt = graph.target(edgeId);
+          const hovered = hoveredNodeRef.current;
+          const highlighted = highlightNodeIdRef.current;
+
+          const isActive = (hovered && (src === hovered || tgt === hovered)) ||
+                          (highlighted && (src === highlighted || tgt === highlighted));
+
+          if (!isActive && (hovered || highlighted)) {
+            return { ...data, hidden: true };
+          }
+
+          const strength = data.strength as string;
+          if (isActive) {
+            return {
+              ...data,
+              color: 'rgba(0, 240, 255, 0.5)',
+              size: strength === 'strong' ? 2 : strength === 'medium' ? 1.2 : 0.8,
+            };
+          }
+
+          return data;
+        },
+        zIndex: true,
+      });
+
+      container.appendChild(hullCanvas);
+      container.appendChild(minimapCanvas);
+      sigmaRef.current = sigma;
+
+      // Event handlers
+      sigma.on('enterNode', ({ node }) => {
+        hoveredNodeRef.current = node;
+        const nd = nodeDataMapRef.current.get(node);
+        onNodeHover?.(nd?.graphNode || null);
+        sigma!.refresh();
+      });
+
+      sigma.on('leaveNode', () => {
+        hoveredNodeRef.current = null;
+        onNodeHover?.(null);
+        sigma!.refresh();
+      });
+
+      sigma.on('clickNode', ({ node }) => {
+        const nd = nodeDataMapRef.current.get(node);
+        if (nd) onNodeClick?.(nd.graphNode);
+      });
+
+      // Drag support
+      sigma.on('downNode', ({ node, event }) => {
+        draggedNodeRef.current = node;
+        workerRef.current?.postMessage({
+          type: 'dragStart',
+          nodeId: node,
+          x: graph!.getNodeAttribute(node, 'x'),
+          y: graph!.getNodeAttribute(node, 'y'),
+        });
+        // Prevent camera from moving during drag
+        sigma!.getCamera().disable();
+      });
+
+      sigma.getMouseCaptor().on('mousemovebody', (e) => {
+        if (!draggedNodeRef.current || !sigma || !graph) return;
+        const pos = sigma.viewportToGraph(e);
+        graph.setNodeAttribute(draggedNodeRef.current, 'x', pos.x);
+        graph.setNodeAttribute(draggedNodeRef.current, 'y', pos.y);
+        workerRef.current?.postMessage({
+          type: 'dragMove',
+          nodeId: draggedNodeRef.current,
+          x: pos.x,
+          y: pos.y,
+        });
+      });
+
+      sigma.getMouseCaptor().on('mouseup', () => {
+        if (draggedNodeRef.current) {
+          workerRef.current?.postMessage({
+            type: 'dragEnd',
+            nodeId: draggedNodeRef.current,
+          });
+          draggedNodeRef.current = null;
+          sigma!.getCamera().enable();
+        }
+      });
+
+      // Render hooks for hull overlay + minimap
+      sigma.on('afterRender', () => {
+        const hullCtx = canvasLayerRef.current?.getContext('2d');
+        if (hullCtx && canvasLayerRef.current) {
+          hullCtx.clearRect(0, 0, canvasLayerRef.current.width, canvasLayerRef.current.height);
+          drawHulls(hullCtx, sigma!);
+        }
+
+        minimapFrameRef.current++;
+        if (minimapFrameRef.current % 5 === 0) {
+          drawMinimap();
+        }
+      });
+    } else if (isNewData) {
+      // Update sigma with new graph
+      sigma.setGraph(graph);
     }
 
-    ctx.globalAlpha = 1;
-  }, [highlightNodeId, highlightOrgId, egoNodeId, showLabels]);
+    // Initialize or restart web worker for force simulation
+    if (isNewData) {
+      if (workerRef.current) {
+        workerRef.current.postMessage({ type: 'stop' });
+        workerRef.current.terminate();
+      }
 
-  const nodePointerAreaPaint = useCallback((node: any, color: string, ctx: CanvasRenderingContext2D) => {
-    const n = node as FGNode;
-    ctx.beginPath();
-    ctx.arc(n.x ?? 0, n.y ?? 0, (tierRadius[n.tier] || 5) + 4, 0, 2 * Math.PI);
-    ctx.fillStyle = color;
-    ctx.fill();
+      const worker = new Worker(
+        new URL('./forceWorker.ts', import.meta.url),
+        { type: 'module' }
+      );
+
+      worker.onmessage = (e) => {
+        const msg = e.data;
+        if (msg.type === 'positions') {
+          const g = graphRef.current;
+          if (!g) return;
+          for (const pos of msg.positions) {
+            if (g.hasNode(pos.id) && draggedNodeRef.current !== pos.id) {
+              g.setNodeAttribute(pos.id, 'x', pos.x);
+              g.setNodeAttribute(pos.id, 'y', pos.y);
+            }
+          }
+          // Invalidate hull cache periodically
+          hullCacheRef.current = [];
+        }
+      };
+
+      const connCounts: Record<string, number> = {};
+      for (const [id, conns] of connectionMap) {
+        connCounts[id] = conns.size;
+      }
+
+      worker.postMessage({
+        type: 'init',
+        nodes: nodes.map(n => ({
+          id: n.id,
+          tier: n.tier,
+          organizationId: n.organizationId,
+        })),
+        links: edges.filter(e => 
+          graph.hasNode(e.source) && graph.hasNode(e.target)
+        ).map(e => ({
+          source: e.source,
+          target: e.target,
+          strength: e.strength,
+        })),
+        connectionCounts: connCounts,
+        params: simParams || { linkDistance: 40, charge: -80, clusterTightness: 20, collisionRadius: 12 },
+      });
+
+      workerRef.current = worker;
+    }
+
+    // Cleanup
+    return () => {
+      // Don't clean up on every render, only on unmount
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges, width, height]);
+
+  // Full cleanup on unmount
+  useEffect(() => {
+    return () => {
+      workerRef.current?.postMessage({ type: 'stop' });
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      sigmaRef.current?.kill();
+      sigmaRef.current = null;
+      graphRef.current = null;
+      canvasLayerRef.current?.remove();
+      minimapCanvasRef.current?.remove();
+    };
   }, []);
 
-  // Link rendering — simplified, no per-link Map lookups for org color
-  const linkCanvasObject = useCallback((link: any, ctx: CanvasRenderingContext2D) => {
-    if (showEdges === false) return;
-    const src = link.source as FGNode;
-    const tgt = link.target as FGNode;
-    if (src.x == null || tgt.x == null) return;
-
-    const hovered = hoveredNodeRef.current;
-    const highlighted = highlightNodeId;
-    const isActive = (hovered && (src.id === hovered || tgt.id === hovered)) ||
-                     (highlighted && (src.id === highlighted || tgt.id === highlighted));
-
-    if (!isActive && (hovered || highlighted)) {
-      // Skip drawing dimmed edges entirely for perf — they're barely visible anyway
-      return;
-    }
-
-    let alpha: number;
-    let lw: number;
-
-    if (isActive) {
-      alpha = 0.5;
-      lw = link.strength === 'strong' ? 2 : link.strength === 'medium' ? 1.2 : 0.8;
-    } else {
-      // Default: very faint
-      alpha = 0.06;
-      lw = 0.3;
-    }
-
-    ctx.beginPath();
-    ctx.moveTo(src.x!, src.y!);
-    ctx.lineTo(tgt.x!, tgt.y!);
-    ctx.strokeStyle = `rgba(0,240,255,${alpha})`;
-    ctx.lineWidth = lw;
-    ctx.stroke();
-  }, [highlightNodeId, showEdges]);
-
-  // Hover — just update ref and notify parent. No animation pausing needed.
-  const handleNodeHover = useCallback((node: any) => {
-    const id = node ? (node as FGNode).id : null;
-    if (hoveredNodeRef.current !== id) {
-      hoveredNodeRef.current = id;
-      onNodeHover?.(node as GraphNode | null);
-    }
-  }, [onNodeHover]);
-
-  const handleNodeClick = useCallback((node: any) => {
-    onNodeClick?.(node as GraphNode);
-  }, [onNodeClick]);
-
-  // Configure forces — use Map for O(1) lookups instead of .find()
-  const nodeIdMap = useMemo(() => {
-    const map = new Map<string, FGNode>();
-    for (const n of nodesRef.current) map.set(n.id, n);
-    return map;
-  }, [nodes]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleEngineInit = useCallback((fg: any) => {
-    fg.d3Force('charge')?.strength((d: FGNode) => {
-      const conns = connectionMap.get(d.id)?.size || 0;
-      return conns <= 2 ? -120 : -40;
-    });
-    fg.d3Force('link')?.distance((link: any) => {
-      const srcId = typeof link.source === 'string' ? link.source : link.source.id;
-      const tgtId = typeof link.target === 'string' ? link.target : link.target.id;
-      const srcNode = nodeIdMap.get(srcId);
-      const tgtNode = nodeIdMap.get(tgtId);
-      if (srcNode?.organizationId && srcNode.organizationId === tgtNode?.organizationId) return 20;
-      const minConns = Math.min(connectionMap.get(srcId)?.size || 0, connectionMap.get(tgtId)?.size || 0);
-      return minConns <= 2 ? 100 : 40;
-    });
-  }, [connectionMap, nodeIdMap]);
-
-  useEffect(() => { if (fgRef.current) handleEngineInit(fgRef.current); }, [handleEngineInit]);
-
-  // Apply simParams to forces when they change
+  // Update sigma settings when highlight/display props change
   useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg || !simParams) return;
+    const sigma = sigmaRef.current;
+    if (!sigma) return;
+    sigma.refresh();
+  }, [highlightNodeId, highlightOrgId, egoNodeId, showLabels, showEdges, showHulls]);
 
-    const charge = fg.d3Force('charge');
-    if (charge) {
-      charge.strength((d: FGNode) => {
-        const conns = connectionMap.get(d.id)?.size || 0;
-        // Scale base charge by the simParams.charge ratio vs default -80
-        const scale = simParams.charge / -80;
-        return (conns <= 2 ? -120 : -40) * scale;
-      });
-    }
-
-    const link = fg.d3Force('link');
-    if (link) {
-      link.distance((l: any) => {
-        const srcId = typeof l.source === 'string' ? l.source : l.source.id;
-        const tgtId = typeof l.target === 'string' ? l.target : l.target.id;
-        const srcNode = nodeIdMap.get(srcId);
-        const tgtNode = nodeIdMap.get(tgtId);
-        if (srcNode?.organizationId && srcNode.organizationId === tgtNode?.organizationId) {
-          return simParams.clusterTightness;
-        }
-        const minConns = Math.min(connectionMap.get(srcId)?.size || 0, connectionMap.get(tgtId)?.size || 0);
-        return minConns <= 2 ? simParams.linkDistance * 2.5 : simParams.linkDistance;
-      });
-    }
-
-    const collide = fg.d3Force('collide');
-    if (collide) {
-      collide.radius(simParams.collisionRadius);
-    } else {
-      fg.d3Force('collide', d3.forceCollide(simParams.collisionRadius));
-    }
-
-    fg.d3ReheatSimulation();
-  }, [simParams, connectionMap, nodeIdMap]);
-
-  // Handle freeze/unfreeze — stop simulation forces but keep canvas interactive
-  const frozenRef = useRef(false);
+  // Resize canvas overlays
   useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg) return;
-    if (frozen && !frozenRef.current) {
-      // Freeze: pin all nodes in place and stop simulation ticks.
-      // Do NOT set any d3Force to null — that destroys forces and blacks out the canvas.
-      // Instead, pin nodes with fx/fy and set cooldownTicks to 0 so the simulation
-      // stops iterating while the canvas render loop stays alive for zoom/pan/click.
-      const nodes = fg.graphData()?.nodes || [];
-      for (const n of nodes) {
-        (n as any).vx = 0;
-        (n as any).vy = 0;
-        (n as any).fx = (n as any).x;
-        (n as any).fy = (n as any).y;
-      }
-      fg.cooldownTicks(0);
-      frozenRef.current = true;
-    } else if (!frozen && frozenRef.current) {
-      // Unfreeze: unpin all nodes and restore simulation
-      const nodes = fg.graphData()?.nodes || [];
-      for (const n of nodes) {
-        (n as any).fx = undefined;
-        (n as any).fy = undefined;
-      }
-      // Restore cooldown and reheat the simulation
-      fg.cooldownTicks(100);
-      fg.d3ReheatSimulation();
-      frozenRef.current = false;
+    if (canvasLayerRef.current) {
+      canvasLayerRef.current.width = width;
+      canvasLayerRef.current.height = height;
     }
-  }, [frozen, handleEngineInit, simParams]);
+    const sigma = sigmaRef.current;
+    if (sigma) {
+      sigma.refresh();
+    }
+  }, [width, height]);
+
+  // Handle simParams changes
+  useEffect(() => {
+    if (simParams && workerRef.current) {
+      workerRef.current.postMessage({ type: 'updateParams', params: simParams });
+    }
+  }, [simParams]);
+
+  // Handle freeze/unfreeze
+  useEffect(() => {
+    if (!workerRef.current) return;
+    if (frozen) {
+      workerRef.current.postMessage({ type: 'freeze' });
+    } else {
+      workerRef.current.postMessage({ type: 'unfreeze' });
+    }
+  }, [frozen]);
+
+  // Hull overlay redraw when showHulls or highlightOrgId changes
+  useEffect(() => {
+    hullCacheRef.current = []; // force rebuild
+    const sigma = sigmaRef.current;
+    if (sigma) sigma.refresh();
+  }, [showHulls, highlightOrgId, drawHulls]);
 
   return (
-    <ForceGraph2D
-      ref={fgRef}
-      graphData={graphData}
-      width={width}
-      height={height}
-      backgroundColor="#0a0a0f"
-      nodeId="id"
-      linkSource="source"
-      linkTarget="target"
-      nodeCanvasObject={nodeCanvasObject}
-      nodePointerAreaPaint={nodePointerAreaPaint}
-      linkCanvasObject={linkCanvasObject}
-      onNodeClick={handleNodeClick}
-      onNodeHover={handleNodeHover}
-      onRenderFramePre={onRenderFramePre}
-      nodeLabel={() => ''}
-      cooldownTicks={100}
-      d3AlphaDecay={0.04}
-      d3VelocityDecay={0.4}
-      warmupTicks={80}
-      d3AlphaMin={0.001}
-      enableNodeDrag={true}
-      enableZoomInteraction={true}
-      enablePanInteraction={true}
+    <div
+      ref={containerRef}
+      style={{
+        width,
+        height,
+        backgroundColor: '#0a0a0f',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
     />
   );
 }
