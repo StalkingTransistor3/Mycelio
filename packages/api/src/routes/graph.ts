@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { getGraphData, getEgoGraph, findConnectionPath, createConnection } from '../services/connections.js';
 import { computeInfluenceScores, detectMicroCommunities, findWarmPath, getSocialContext } from '../services/graph-analytics.js';
+import { META } from './docs.js';
 
 export async function graphRoutes(app: FastifyInstance) {
   // GET /api/graph — nodes + edges for D3
@@ -76,6 +77,7 @@ export async function graphRoutes(app: FastifyInstance) {
       toPersonId: string;
       strength?: 'strong' | 'medium' | 'weak';
       type?: string;
+      source?: 'manual' | 'event_copresence' | 'introduction' | 'inferred';
       context?: string;
       howMet?: string;
       connectedAt?: string;
@@ -90,8 +92,9 @@ export async function graphRoutes(app: FastifyInstance) {
     const connection = await createConnection({
       ...body,
       type: body.type as any,
+      source: body.source || 'manual',
       connectedAt: body.connectedAt ? new Date(body.connectedAt) : undefined,
     });
-    return reply.code(201).send({ data: connection });
+    return reply.code(201).send({ data: connection, _meta: META.connection });
   });
 }

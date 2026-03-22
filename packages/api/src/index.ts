@@ -15,6 +15,9 @@ import { followUpsRoutes } from './routes/follow-ups.js';
 import { organizationsRoutes } from './routes/organizations.js';
 import { venueRoutes } from './routes/venues.js';
 import { campaignsRoutes } from './routes/campaigns.js';
+import { cadenceRoutes } from './routes/cadence.js';
+import { projectsRoutes } from './routes/projects.js';
+import { docsRoutes } from './routes/docs.js';
 import { authPlugin } from './auth.js';
 
 const port = parseInt(process.env.API_PORT || '3001', 10);
@@ -33,6 +36,9 @@ async function start() {
   await app.register(organizationsRoutes, { prefix: '/api' });
   await app.register(venueRoutes, { prefix: '/api' });
   await app.register(campaignsRoutes, { prefix: '/api' });
+  await app.register(cadenceRoutes, { prefix: '/api' });
+  await app.register(projectsRoutes, { prefix: '/api' });
+  await app.register(docsRoutes, { prefix: '/api' });
 
   try {
     await app.listen({ port, host: '0.0.0.0' });

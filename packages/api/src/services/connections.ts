@@ -1,6 +1,6 @@
 import { eq, or } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
-import type { GraphData, GraphNode, GraphEdge, GraphGroup, ConnectionStrength, ConnectionType } from '@mycelio/shared';
+import type { GraphData, GraphNode, GraphEdge, GraphGroup, ConnectionStrength, ConnectionType, ConnectionSource } from '@mycelio/shared';
 
 const { connections, people, organizations } = schema;
 
@@ -9,6 +9,7 @@ export async function createConnection(data: {
   toPersonId: string;
   strength?: ConnectionStrength;
   type?: ConnectionType;
+  source?: ConnectionSource;
   context?: string;
   howMet?: string;
   connectedAt?: Date;
@@ -20,6 +21,7 @@ export async function createConnection(data: {
       toPersonId: data.toPersonId,
       strength: data.strength || 'medium',
       type: data.type || null,
+      source: data.source || 'manual',
       context: data.context || null,
       howMet: data.howMet || null,
       connectedAt: data.connectedAt || null,
@@ -98,6 +100,7 @@ export async function getGraphData(options?: {
       source: c.fromPersonId,
       target: c.toPersonId,
       strength: c.strength as ConnectionStrength,
+      source_type: c.source as ConnectionSource,
       context: c.context,
     }));
 
@@ -182,6 +185,7 @@ export async function getEgoGraph(personId: string, depth: number = 1): Promise<
       source: c.fromPersonId,
       target: c.toPersonId,
       strength: c.strength as ConnectionStrength,
+      source_type: c.source as ConnectionSource,
       context: c.context,
     }));
 

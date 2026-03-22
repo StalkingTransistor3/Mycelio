@@ -143,4 +143,28 @@ export const api = {
   updateCampaignMember: (campaignId: string, memberId: string, data: unknown) => request<{ data: unknown }>(`/campaigns/${campaignId}/members/${memberId}`, { method: 'PUT', body: JSON.stringify(data) }),
   removeCampaignMember: (campaignId: string, memberId: string) => request<{ data: unknown }>(`/campaigns/${campaignId}/members/${memberId}`, { method: 'DELETE' }),
   getCampaignStats: (id: string) => request<{ data: unknown }>(`/campaigns/${id}/stats`),
+
+  // Projects
+  getProjects: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<{ data: unknown[] }>(`/projects${qs}`);
+  },
+  getProject: (id: string) => request<{ data: unknown }>(`/projects/${id}`),
+  getProjectsGantt: () => request<{ data: unknown[] }>('/projects/gantt'),
+  createProject: (data: unknown) => request<{ data: unknown }>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+  updateProject: (id: string, data: unknown) => request<{ data: unknown }>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteProject: (id: string) => request<{ data: unknown }>(`/projects/${id}`, { method: 'DELETE' }),
+
+  // Tasks
+  getProjectTasks: (projectId: string, params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<{ data: unknown[] }>(`/projects/${projectId}/tasks${qs}`);
+  },
+  getTasks: (params?: Record<string, string>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return request<{ data: unknown[] }>(`/tasks${qs}`);
+  },
+  createTask: (projectId: string, data: unknown) => request<{ data: unknown }>(`/projects/${projectId}/tasks`, { method: 'POST', body: JSON.stringify(data) }),
+  updateTask: (taskId: string, data: unknown) => request<{ data: unknown }>(`/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTask: (taskId: string) => request<{ data: unknown }>(`/tasks/${taskId}`, { method: 'DELETE' }),
 };

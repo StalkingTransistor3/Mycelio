@@ -136,6 +136,37 @@ export const campaignMembers = pgTable('campaign_members', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── Projects ──
+export const projects = pgTable('projects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  status: varchar('status', { length: 30 }).notNull().default('active'),
+  startDate: timestamp('start_date', { withTimezone: true }),
+  endDate: timestamp('end_date', { withTimezone: true }),
+  tags: jsonb('tags').$type<string[]>().notNull().default([]),
+  color: varchar('color', { length: 30 }).default('#00f0ff'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── Tasks ──
+export const tasks = pgTable('tasks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  title: varchar('title', { length: 255 }).notNull(),
+  description: text('description'),
+  status: varchar('status', { length: 30 }).notNull().default('todo'),
+  priority: integer('priority').notNull().default(0),
+  assignee: varchar('assignee', { length: 255 }),
+  startDate: timestamp('start_date', { withTimezone: true }),
+  dueDate: timestamp('due_date', { withTimezone: true }),
+  dependencies: jsonb('dependencies').$type<string[]>().notNull().default([]),
+  tags: jsonb('tags').$type<string[]>().notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Connections (relationship graph edges) ──
 export const connections = pgTable('connections', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -143,6 +174,7 @@ export const connections = pgTable('connections', {
   toPersonId: uuid('to_person_id').notNull().references(() => people.id, { onDelete: 'cascade' }),
   strength: varchar('strength', { length: 20 }).notNull().default('medium'),
   type: varchar('type', { length: 50 }),
+  source: varchar('source', { length: 30 }).notNull().default('manual'),
   context: text('context'),
   howMet: text('how_met'),
   connectedAt: timestamp('connected_at', { withTimezone: true }),

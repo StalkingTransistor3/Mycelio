@@ -26,6 +26,8 @@ export type ConnectionType =
   | 'community'
   | 'other';
 
+export type ConnectionSource = 'manual' | 'event_copresence' | 'introduction' | 'inferred';
+
 export type AttendeeRole =
   | 'attendee'
   | 'speaker'
@@ -181,6 +183,7 @@ export interface Connection {
   toPersonId: string;
   strength: ConnectionStrength;
   type: ConnectionType | null;
+  source: ConnectionSource;
   context: string | null;
   howMet: string | null;
   connectedAt: string | null;
@@ -233,6 +236,7 @@ export interface GraphEdge {
   source: string;
   target: string;
   strength: ConnectionStrength;
+  source_type: ConnectionSource;
   context: string | null;
 }
 
@@ -319,6 +323,45 @@ export interface MicroCommunity {
   memberIds: string[];
   sharedTags: string[];
   cohesion: number; // 0-1
+}
+
+// ── Projects & Tasks ──
+
+export type ProjectStatus = 'active' | 'completed' | 'on_hold' | 'archived';
+
+export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked';
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  status: ProjectStatus;
+  startDate: string | null;
+  endDate: string | null;
+  tags: string[];
+  color: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Task {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: number;
+  assignee: string | null;
+  startDate: string | null;
+  dueDate: string | null;
+  dependencies: string[];
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectWithTasks extends Project {
+  tasks: Task[];
 }
 
 export interface ApiResponse<T> {

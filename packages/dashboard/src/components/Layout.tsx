@@ -8,6 +8,8 @@ const navItems = [
   { to: '/follow-ups', label: 'Follow-ups', icon: '◉' },
   { to: '/pipeline', label: 'Pipeline', icon: '▸' },
   { to: '/campaigns', label: 'Campaigns', icon: '⬟' },
+  { to: '/projects', label: 'Projects', icon: '▦' },
+  { to: '/gantt', label: 'Gantt', icon: '▬' },
   { to: '/venues', label: 'Venues', icon: '⌂' },
   { to: '/graph', label: 'Network', icon: '◇' },
 ];

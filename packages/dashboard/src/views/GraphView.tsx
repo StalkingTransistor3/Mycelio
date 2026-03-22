@@ -284,9 +284,13 @@ export default function GraphView() {
             />
           ) : (
             !isLoading && (
-              <div className="h-full flex items-center justify-center">
-                <p className="text-white/20">
-                  No connections yet. Add people and connections to see your network.
+              <div className="h-full flex flex-col items-center justify-center gap-3 px-8">
+                <div className="text-white/30 text-4xl">&#x1f310;</div>
+                <p className="text-white/40 text-sm font-mono text-center max-w-md">
+                  Connections are built through logged interactions, not assumptions.
+                </p>
+                <p className="text-white/20 text-xs font-mono text-center max-w-md">
+                  Log meetings, confirm event interactions, or add connections manually to grow this graph. Sparse is intentional — every edge means something real.
                 </p>
               </div>
             )

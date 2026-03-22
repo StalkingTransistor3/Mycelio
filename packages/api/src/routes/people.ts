@@ -5,6 +5,7 @@ import { computeCoAttendance } from '../services/co-attendance.js';
 import { computeReciprocityIndex } from '../services/reciprocity.js';
 import { transitionStage, getPipeline, suggestStage } from '../services/stages.js';
 import { analyzeCommPatterns, detectAvailability, getSmartReengagement } from '../services/intelligence.js';
+import { META } from './docs.js';
 import type { PeopleSearchParams, RelationshipTier } from '@mycelio/shared';
 
 export async function peopleRoutes(app: FastifyInstance) {
@@ -30,7 +31,7 @@ export async function peopleRoutes(app: FastifyInstance) {
     if (!person) {
       return reply.code(404).send({ error: 'Not found', message: 'Person not found', statusCode: 404 });
     }
-    return { data: person };
+    return { data: person, _meta: META.person };
   });
 
   // POST /api/people

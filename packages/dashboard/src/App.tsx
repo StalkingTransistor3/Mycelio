@@ -12,6 +12,9 @@ import PipelineView from './views/PipelineView.js';
 import VenueList from './views/VenueList.js';
 import CampaignList from './views/CampaignList.js';
 import CampaignDetail from './views/CampaignDetail.js';
+import ProjectList from './views/ProjectList.js';
+import ProjectDetail from './views/ProjectDetail.js';
+import GanttView from './views/GanttView.js';
 import GraphView from './views/GraphView.js';
 
 export default function App() {
@@ -29,6 +32,9 @@ export default function App() {
         <Route path="/pipeline" element={<PipelineView />} />
         <Route path="/campaigns" element={<CampaignList />} />
         <Route path="/campaigns/:id" element={<CampaignDetail />} />
+        <Route path="/projects" element={<ProjectList />} />
+        <Route path="/projects/:id" element={<ProjectDetail />} />
+        <Route path="/gantt" element={<GanttView />} />
         <Route path="/venues" element={<VenueList />} />
         <Route path="/graph" element={<GraphView />} />
       </Route>

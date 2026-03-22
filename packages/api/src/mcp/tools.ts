@@ -13,6 +13,8 @@ import { transitionStage, getPipeline, suggestStage } from '../services/stages.j
 import { computeInfluenceScores, detectMicroCommunities, findWarmPath, getSocialContext } from '../services/graph-analytics.js';
 import { analyzeCommPatterns, detectAvailability, getSmartReengagement } from '../services/intelligence.js';
 import { searchCampaigns, createCampaign, getCampaignMembers, getCampaignWithStats, addBulkCampaignMembers, updateCampaignMember, addCampaignMember } from '../services/campaigns.js';
+import { getDailyCadenceReport, getWeeklyCadenceStats, formatCadenceReport, formatWeeklyStats } from '../services/cadence.js';
+import { listProjects, createProject, getProjectWithTasks, listTasks, createTask, updateTask } from '../services/projects.js';
 
 // Helper: resolve a person name to an ID, creating if needed
 async function resolvePersonId(name: string): Promise<string> {
@@ -55,7 +57,7 @@ export const tools: ToolDefinition[] = [
   // 1. log_interaction
   {
     name: 'log_interaction',
-    description: 'Log a new interaction with a person. Creates the person if they don\'t exist (by name match). Updates lastContactAt automatically. Supports multi-person interactions and event linking.',
+    description: 'Log a new interaction with a person. Creates the person if they don\'t exist (by name match). Updates lastContactAt automatically. Supports multi-person interactions and event linking. Valid interaction types: meeting, email, call, social, event, intro, follow_up, other. For full field reference see GET /api/schema. For workflows and examples see GET /api/docs/guide.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -118,7 +120,7 @@ export const tools: ToolDefinition[] = [
   // 2. query_people
   {
     name: 'query_people',
-    description: 'Search for people by name, tier, tags, or organization. Returns a list of matching people.',
+    description: 'Search for people by name, tier (1-5, lower=closer), tags, or organization. Returns a list of matching people. For field definitions see GET /api/schema. For tier meanings and enum values see GET /api/schema (enums section).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -144,7 +146,7 @@ export const tools: ToolDefinition[] = [
   // 3. get_person
   {
     name: 'get_person',
-    description: 'Get detailed information about a specific person, including their recent interactions.',
+    description: 'Get detailed information about a specific person, including their recent interactions. Response includes _meta with tier_values, editable_fields, interaction_types, stages, and milestone_types. For full schema see GET /api/schema.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -345,7 +347,7 @@ export const tools: ToolDefinition[] = [
   // 7. community_health
   {
     name: 'community_health',
-    description: 'Get health metrics for a community: member count, average tier, recent interactions, stale members.',
+    description: 'Get health metrics for a community: member count, average tier, recent interactions, stale members. For tier definitions and org types see GET /api/schema.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -405,7 +407,7 @@ export const tools: ToolDefinition[] = [
   // 9. find_connections
   {
     name: 'find_connections',
-    description: 'Find connection paths between two people in the network.',
+    description: 'Find connection paths between two people in the network. For connection scoring and strength tiers see GET /api/docs/connection-rules.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -437,10 +439,55 @@ export const tools: ToolDefinition[] = [
     },
   },
 
+  // 9b. add_connection
+  {
+    name: 'add_connection',
+    description: 'Manually create a connection between two people. Connections represent real relationships — only create them when there is evidence of interaction. Source tracks how: manual, event_copresence, introduction, inferred. Response includes _meta with tier_values, editable_fields, source_values, type_values, multiplexity_contexts, and evidence_format. IMPORTANT: Read GET /api/docs/connection-rules for scoring philosophy, creation rules, and hard constraints before creating or scoring connections.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fromPersonId: { type: 'string', description: 'UUID of the first person' },
+        fromPersonName: { type: 'string', description: 'Name of the first person (if UUID not known)' },
+        toPersonId: { type: 'string', description: 'UUID of the second person' },
+        toPersonName: { type: 'string', description: 'Name of the second person (if UUID not known)' },
+        strength: { type: 'string', enum: ['strong', 'medium', 'weak'], description: 'Connection strength (default: medium)' },
+        type: { type: 'string', enum: ['colleague', 'mentor', 'mentee', 'co-founder', 'friend', 'investor', 'client', 'collaborator', 'community', 'other'], description: 'Relationship type' },
+        source: { type: 'string', enum: ['manual', 'event_copresence', 'introduction'], description: 'How this connection was established (default: manual)' },
+        context: { type: 'string', description: 'Context about the connection' },
+        howMet: { type: 'string', description: 'How they met' },
+        connectedAt: { type: 'string', description: 'When they connected (ISO date)' },
+      },
+    },
+    handler: async (args) => {
+      let fromId = args.fromPersonId as string | undefined;
+      let toId = args.toPersonId as string | undefined;
+
+      if (!fromId && args.fromPersonName) {
+        fromId = await resolvePersonId(args.fromPersonName as string);
+      }
+      if (!toId && args.toPersonName) {
+        toId = await resolvePersonId(args.toPersonName as string);
+      }
+      if (!fromId || !toId) return { error: 'Both from and to person are required (by ID or name)' };
+
+      const connection = await createConnection({
+        fromPersonId: fromId,
+        toPersonId: toId,
+        strength: (args.strength as any) || 'medium',
+        type: (args.type as any) || null,
+        source: (args.source as any) || 'manual',
+        context: args.context as string | undefined,
+        howMet: args.howMet as string | undefined,
+        connectedAt: args.connectedAt ? new Date(args.connectedAt as string) : undefined,
+      });
+      return { success: true, connection };
+    },
+  },
+
   // 10. follow_ups
   {
     name: 'follow_ups',
-    description: 'Get the list of people who need follow-up, sorted by urgency. Shows overdue contacts, cooling alerts, upcoming milestones, and suggested actions.',
+    description: 'Get the list of people who need follow-up, sorted by urgency. Shows overdue contacts, cooling alerts, upcoming milestones, and suggested actions. For tier cadence expectations and relationship maintenance philosophy see GET /api/docs/guide.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -866,7 +913,7 @@ export const tools: ToolDefinition[] = [
   // 23. update_stage
   {
     name: 'update_stage',
-    description: 'Move a person through the relationship pipeline. Stages: prospect → warm → active → collaborator → inner_circle. Records transition history.',
+    description: 'Move a person through the relationship pipeline. Stages: prospect → warm → active → collaborator → inner_circle. Records transition history. For stage definitions and pipeline workflow see GET /api/docs/guide.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1080,7 +1127,7 @@ export const tools: ToolDefinition[] = [
   // 32. create_campaign
   {
     name: 'create_campaign',
-    description: 'Create a new campaign for targeted outreach. Campaigns group people for organized follow-up and tracking.',
+    description: 'Create a new campaign for targeted outreach. Campaigns group people for organized follow-up and tracking. Campaign statuses: draft, active, paused, completed, archived. Types: outreach, nurture, event, recruitment, other. For full field reference see GET /api/schema.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1294,6 +1341,238 @@ export const tools: ToolDefinition[] = [
         highWarmthUnconverted: highWarmth,
         totalMembers: members.length,
       };
+    },
+  },
+
+  // 37. cadence_report
+  {
+    name: 'cadence_report',
+    description: 'Get today\'s prioritized relationship maintenance cadence report. Shows who to reach out to, suggested touch types, and estimated time. Based on Dunbar layers and exponential relationship decay model. Budget: ~68 min/day (~8 hrs/week).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        budgetMinutes: { type: 'number', description: 'Override daily time budget in minutes (default: 68)' },
+        maxEntries: { type: 'number', description: 'Max contacts to include (default: 20)' },
+        tierFilter: { type: 'array', items: { type: 'number' }, description: 'Only show specific tiers (e.g. [1,2])' },
+        includeFresh: { type: 'boolean', description: 'Include contacts with fresh/healthy status (default: false)' },
+        format: { type: 'string', enum: ['text', 'json'], description: 'Output format (default: text)' },
+      },
+    },
+    handler: async (args) => {
+      const report = await getDailyCadenceReport({
+        budgetMinutes: args.budgetMinutes as number | undefined,
+        maxEntries: args.maxEntries as number | undefined,
+        tierFilter: args.tierFilter as number[] | undefined,
+        includeFresh: args.includeFresh as boolean | undefined,
+      });
+
+      if (args.format === 'json') return report;
+      return formatCadenceReport(report);
+    },
+  },
+
+  // 38. cadence_stats
+  {
+    name: 'cadence_stats',
+    description: 'Get weekly cadence compliance statistics: coverage by tier, health distribution, time spent, and alerts for missed contacts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        format: { type: 'string', enum: ['text', 'json'], description: 'Output format (default: text)' },
+      },
+    },
+    handler: async (args) => {
+      const stats = await getWeeklyCadenceStats();
+      if (args.format === 'json') return stats;
+      return formatWeeklyStats(stats);
+    },
+  },
+
+  // 39. create_project
+  {
+    name: 'create_project',
+    description: 'Create a new project for tracking tasks and milestones. Projects group related tasks and display on Gantt charts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Project name' },
+        description: { type: 'string', description: 'Project description' },
+        status: { type: 'string', enum: ['active', 'completed', 'on_hold', 'archived'], description: 'Project status (default: active)' },
+        startDate: { type: 'string', description: 'ISO date for project start' },
+        endDate: { type: 'string', description: 'ISO date for project end' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags for categorization' },
+        color: { type: 'string', description: 'Hex color for Gantt chart display (default: #00f0ff)' },
+      },
+      required: ['name'],
+    },
+    handler: async (args) => {
+      const project = await createProject({
+        name: args.name as string,
+        description: args.description as string | undefined,
+        status: args.status as string | undefined,
+        startDate: args.startDate ? new Date(args.startDate as string) : undefined,
+        endDate: args.endDate ? new Date(args.endDate as string) : undefined,
+        tags: args.tags as string[] | undefined,
+        color: args.color as string | undefined,
+      });
+      return { success: true, project };
+    },
+  },
+
+  // 40. list_projects
+  {
+    name: 'list_projects',
+    description: 'List all projects, optionally filtered by status, tags, or search query. Returns project metadata.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search by project name' },
+        status: { type: 'string', enum: ['active', 'completed', 'on_hold', 'archived'], description: 'Filter by status' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
+        includeTasks: { type: 'boolean', description: 'Include tasks in response (default: false)' },
+        limit: { type: 'number', description: 'Max results' },
+      },
+    },
+    handler: async (args) => {
+      if (args.includeTasks) {
+        const projects = await listProjects({
+          query: args.query as string | undefined,
+          status: args.status as string | undefined,
+          tags: args.tags as string[] | undefined,
+          limit: args.limit as number | undefined,
+        });
+        const enriched = [];
+        for (const p of projects) {
+          const withTasks = await getProjectWithTasks(p.id);
+          if (withTasks) enriched.push(withTasks);
+        }
+        return { projects: enriched, count: enriched.length };
+      }
+      const projects = await listProjects({
+        query: args.query as string | undefined,
+        status: args.status as string | undefined,
+        tags: args.tags as string[] | undefined,
+        limit: args.limit as number | undefined,
+      });
+      return { projects, count: projects.length };
+    },
+  },
+
+  // 41. create_task
+  {
+    name: 'create_task',
+    description: 'Create a new task within a project. Tasks can have priorities, assignees, dates, and dependencies on other tasks.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'UUID of the project' },
+        projectName: { type: 'string', description: 'Name of the project (will search for match)' },
+        title: { type: 'string', description: 'Task title' },
+        description: { type: 'string', description: 'Task description' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done', 'blocked'], description: 'Task status (default: todo)' },
+        priority: { type: 'number', description: 'Priority (lower = higher priority, default: 0)' },
+        assignee: { type: 'string', description: 'Person assigned to the task' },
+        startDate: { type: 'string', description: 'ISO date for task start' },
+        dueDate: { type: 'string', description: 'ISO date for task due date' },
+        dependencies: { type: 'array', items: { type: 'string' }, description: 'UUIDs of tasks that must complete first' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags for categorization' },
+      },
+      required: ['title'],
+    },
+    handler: async (args) => {
+      let projectId = args.projectId as string | undefined;
+      if (!projectId && args.projectName) {
+        const projects = await listProjects({ query: args.projectName as string, limit: 1 });
+        if (projects.length > 0) projectId = projects[0].id;
+        else return { error: `Project "${args.projectName}" not found` };
+      }
+      if (!projectId) return { error: 'Either projectId or projectName is required' };
+
+      const task = await createTask({
+        projectId,
+        title: args.title as string,
+        description: args.description as string | undefined,
+        status: args.status as string | undefined,
+        priority: args.priority as number | undefined,
+        assignee: args.assignee as string | undefined,
+        startDate: args.startDate ? new Date(args.startDate as string) : undefined,
+        dueDate: args.dueDate ? new Date(args.dueDate as string) : undefined,
+        dependencies: args.dependencies as string[] | undefined,
+        tags: args.tags as string[] | undefined,
+      });
+      return { success: true, task };
+    },
+  },
+
+  // 42. update_task
+  {
+    name: 'update_task',
+    description: 'Update an existing task\'s status, priority, assignee, dates, or other fields.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'UUID of the task' },
+        title: { type: 'string', description: 'Updated task title' },
+        description: { type: 'string', description: 'Updated description' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done', 'blocked'], description: 'Updated status' },
+        priority: { type: 'number', description: 'Updated priority' },
+        assignee: { type: 'string', description: 'Updated assignee' },
+        startDate: { type: 'string', description: 'Updated start date (ISO)' },
+        dueDate: { type: 'string', description: 'Updated due date (ISO)' },
+        dependencies: { type: 'array', items: { type: 'string' }, description: 'Updated dependency task IDs' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Updated tags' },
+      },
+      required: ['taskId'],
+    },
+    handler: async (args) => {
+      const taskId = args.taskId as string;
+      const updateData: Record<string, unknown> = {};
+      if (args.title != null) updateData.title = args.title;
+      if (args.description != null) updateData.description = args.description;
+      if (args.status != null) updateData.status = args.status;
+      if (args.priority != null) updateData.priority = args.priority;
+      if (args.assignee != null) updateData.assignee = args.assignee;
+      if (args.startDate != null) updateData.startDate = new Date(args.startDate as string);
+      if (args.dueDate != null) updateData.dueDate = new Date(args.dueDate as string);
+      if (args.dependencies != null) updateData.dependencies = args.dependencies;
+      if (args.tags != null) updateData.tags = args.tags;
+
+      const task = await updateTask(taskId, updateData);
+      if (!task) return { error: 'Task not found' };
+      return { success: true, task };
+    },
+  },
+
+  // 43. list_tasks
+  {
+    name: 'list_tasks',
+    description: 'List tasks across all projects or for a specific project. Filter by status, assignee, or tags.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Filter by project UUID' },
+        projectName: { type: 'string', description: 'Filter by project name (will search for match)' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done', 'blocked'], description: 'Filter by status' },
+        assignee: { type: 'string', description: 'Filter by assignee name' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
+        limit: { type: 'number', description: 'Max results' },
+      },
+    },
+    handler: async (args) => {
+      let projectId = args.projectId as string | undefined;
+      if (!projectId && args.projectName) {
+        const projects = await listProjects({ query: args.projectName as string, limit: 1 });
+        if (projects.length > 0) projectId = projects[0].id;
+      }
+
+      const tasks = await listTasks({
+        projectId,
+        status: args.status as string | undefined,
+        assignee: args.assignee as string | undefined,
+        tags: args.tags as string[] | undefined,
+        limit: args.limit as number | undefined,
+      });
+      return { tasks, count: tasks.length };
     },
   },
 ];
