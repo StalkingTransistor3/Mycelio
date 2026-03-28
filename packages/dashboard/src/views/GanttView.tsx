@@ -1,11 +1,49 @@
+import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useProjectsGantt } from '../hooks/useProjects.js';
+import { api } from '../api/client.js';
 import GanttChart from '../components/GanttChart.js';
 import type { ProjectWithTasks } from '@mycelio/shared';
 
 export default function GanttView() {
   const { data: projects, isLoading, error } = useProjectsGantt();
   const navigate = useNavigate();
+  const qc = useQueryClient();
+
+  const updateTaskDates = useMutation({
+    mutationFn: ({ taskId, startDate, dueDate }: { taskId: string; projectId: string; startDate: string; dueDate: string }) =>
+      api.updateTask(taskId, { startDate, dueDate }),
+    onSuccess: (_data, { projectId }) => {
+      qc.invalidateQueries({ queryKey: ['projects-gantt'] });
+      qc.invalidateQueries({ queryKey: ['project', projectId] });
+      qc.invalidateQueries({ queryKey: ['project-tasks', projectId] });
+    },
+  });
+
+  const handleTaskDateChange = useCallback(
+    (taskId: string, projectId: string, startDate: string, dueDate: string) => {
+      updateTaskDates.mutate({ taskId, projectId, startDate, dueDate });
+    },
+    [updateTaskDates],
+  );
+
+  const updateTaskStatus = useMutation({
+    mutationFn: ({ taskId, status }: { taskId: string; projectId: string; status: string }) =>
+      api.updateTask(taskId, { status }),
+    onSuccess: (_data, { projectId }) => {
+      qc.invalidateQueries({ queryKey: ['projects-gantt'] });
+      qc.invalidateQueries({ queryKey: ['project', projectId] });
+      qc.invalidateQueries({ queryKey: ['project-tasks', projectId] });
+    },
+  });
+
+  const handleTaskStatusToggle = useCallback(
+    (taskId: string, projectId: string, newStatus: string) => {
+      updateTaskStatus.mutate({ taskId, projectId, status: newStatus });
+    },
+    [updateTaskStatus],
+  );
 
   if (isLoading) return <p className="text-white/30 animate-pulse">Loading...</p>;
   if (error) return <p className="text-red-400">Error: {(error as Error).message}</p>;
@@ -36,6 +74,8 @@ export default function GanttView() {
         <GanttChart
           projects={allProjects}
           onProjectClick={(id) => navigate(`/projects/${id}`)}
+          onTaskDateChange={handleTaskDateChange}
+          onTaskStatusToggle={handleTaskStatusToggle}
         />
       )}
 

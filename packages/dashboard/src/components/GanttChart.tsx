@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import type { Task, ProjectWithTasks } from '@mycelio/shared';
 
 interface GanttItem {
@@ -9,6 +9,7 @@ interface GanttItem {
   color: string;
   status: string;
   isProject?: boolean;
+  projectId?: string;
   dependencies?: string[];
 }
 
@@ -16,6 +17,17 @@ interface GanttChartProps {
   projects: ProjectWithTasks[];
   onTaskClick?: (taskId: string) => void;
   onProjectClick?: (projectId: string) => void;
+  onTaskDateChange?: (taskId: string, projectId: string, startDate: string, dueDate: string) => void;
+  onTaskStatusToggle?: (taskId: string, projectId: string, newStatus: string) => void;
+}
+
+interface DragState {
+  itemId: string;
+  projectId: string;
+  originalStart: Date;
+  originalEnd: Date;
+  startMouseX: number;
+  dayOffset: number;
 }
 
 const STATUS_OPACITY: Record<string, number> = {
@@ -34,6 +46,7 @@ const HEADER_HEIGHT = 48;
 const LABEL_WIDTH = 220;
 const DAY_WIDTH = 24;
 const MIN_BAR_WIDTH = 8;
+const DRAG_THRESHOLD = 3;
 
 function daysBetween(a: Date, b: Date) {
   return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
@@ -43,10 +56,19 @@ function formatDate(d: Date) {
   return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
 
-export default function GanttChart({ projects, onTaskClick, onProjectClick }: GanttChartProps) {
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
+function addDays(d: Date, days: number): Date {
+  const result = new Date(d);
+  result.setDate(result.getDate() + days);
+  return result;
+}
 
-  const { items, timelineStart, timelineEnd, totalDays, months } = useMemo(() => {
+export default function GanttChart({ projects, onTaskClick, onProjectClick, onTaskDateChange, onTaskStatusToggle }: GanttChartProps) {
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const didDragRef = useRef(false);
+
+  const { items, timelineStart, totalDays, months } = useMemo(() => {
     const now = new Date();
     const items: GanttItem[] = [];
     let earliest = new Date(now);
@@ -84,6 +106,7 @@ export default function GanttChart({ projects, onTaskClick, onProjectClick }: Ga
           end: tEnd,
           color: project.color || '#00f0ff',
           status: task.status,
+          projectId: project.id,
           dependencies: task.dependencies,
         });
       }
@@ -118,6 +141,65 @@ export default function GanttChart({ projects, onTaskClick, onProjectClick }: Ga
 
     return { items, timelineStart, timelineEnd, totalDays, months };
   }, [projects]);
+
+  // --- Drag-and-drop: mousedown on a task bar ---
+  const handleBarMouseDown = useCallback(
+    (e: React.MouseEvent, item: GanttItem) => {
+      if (item.isProject || !onTaskDateChange || !item.projectId) return;
+      e.stopPropagation();
+      const state: DragState = {
+        itemId: item.id,
+        projectId: item.projectId,
+        originalStart: item.start,
+        originalEnd: item.end,
+        startMouseX: e.clientX,
+        dayOffset: 0,
+      };
+      dragRef.current = state;
+      didDragRef.current = false;
+      setDragState(state);
+    },
+    [onTaskDateChange],
+  );
+
+  // --- Drag-and-drop: window-level mousemove/mouseup ---
+  useEffect(() => {
+    if (!dragState) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+
+      const dx = e.clientX - drag.startMouseX;
+      if (Math.abs(dx) > DRAG_THRESHOLD) {
+        didDragRef.current = true;
+      }
+      const dayOffset = Math.round(dx / DAY_WIDTH);
+      if (dayOffset !== drag.dayOffset) {
+        const updated = { ...drag, dayOffset };
+        dragRef.current = updated;
+        setDragState(updated);
+      }
+    };
+
+    const handleMouseUp = () => {
+      const drag = dragRef.current;
+      if (drag && didDragRef.current && drag.dayOffset !== 0 && onTaskDateChange) {
+        const newStart = addDays(drag.originalStart, drag.dayOffset);
+        const newEnd = addDays(drag.originalEnd, drag.dayOffset);
+        onTaskDateChange(drag.itemId, drag.projectId, newStart.toISOString(), newEnd.toISOString());
+      }
+      dragRef.current = null;
+      setDragState(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [dragState, onTaskDateChange]);
 
   if (items.length === 0) {
     return (
@@ -159,21 +241,25 @@ export default function GanttChart({ projects, onTaskClick, onProjectClick }: Ga
         {/* Rows */}
         {items.map((item, idx) => {
           const y = HEADER_HEIGHT + idx * ROW_HEIGHT;
-          const barStart = daysBetween(timelineStart, item.start) * DAY_WIDTH;
+          const isDragging = dragState?.itemId === item.id;
+          const dragOffset = isDragging ? dragState.dayOffset * DAY_WIDTH : 0;
+          const barStart = daysBetween(timelineStart, item.start) * DAY_WIDTH + dragOffset;
           const barWidth = Math.max(MIN_BAR_WIDTH, daysBetween(item.start, item.end) * DAY_WIDTH);
           const opacity = STATUS_OPACITY[item.status] ?? 0.8;
           const isHovered = hoveredId === item.id;
+          const isDraggable = !item.isProject && !!onTaskDateChange && !!item.projectId;
 
           return (
             <g
               key={item.id}
-              onMouseEnter={() => setHoveredId(item.id)}
-              onMouseLeave={() => setHoveredId(null)}
+              onMouseEnter={() => !dragState && setHoveredId(item.id)}
+              onMouseLeave={() => !dragState && setHoveredId(null)}
               onClick={() => {
+                if (didDragRef.current) return;
                 if (item.isProject) onProjectClick?.(item.id);
                 else onTaskClick?.(item.id);
               }}
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: isDragging ? 'grabbing' : isDraggable ? 'grab' : 'pointer' }}
             >
               {/* Row background */}
               <rect
@@ -187,16 +273,45 @@ export default function GanttChart({ projects, onTaskClick, onProjectClick }: Ga
               {/* Row divider */}
               <line x1={0} y1={y + ROW_HEIGHT} x2={svgWidth} y2={y + ROW_HEIGHT} stroke="rgba(255,255,255,0.03)" />
 
+              {/* Checkbox for tasks */}
+              {!item.isProject && onTaskStatusToggle && item.projectId && (
+                <g
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const newStatus = item.status === 'done' ? 'todo' : 'done';
+                    onTaskStatusToggle(item.id, item.projectId!, newStatus);
+                  }}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <rect
+                    x={12}
+                    y={y + ROW_HEIGHT / 2 - 6}
+                    width={12}
+                    height={12}
+                    rx={2}
+                    fill={item.status === 'done' ? 'rgba(0,240,255,0.3)' : 'transparent'}
+                    stroke={item.status === 'done' ? 'rgba(0,240,255,0.6)' : 'rgba(255,255,255,0.2)'}
+                    strokeWidth={1.5}
+                  />
+                  {item.status === 'done' && (
+                    <text x={14} y={y + ROW_HEIGHT / 2 + 4} fill="rgba(0,240,255,0.9)" fontSize={10} fontWeight={700}>
+                      ✓
+                    </text>
+                  )}
+                </g>
+              )}
+
               {/* Label */}
               <text
-                x={item.isProject ? 12 : 24}
+                x={item.isProject ? 12 : 30}
                 y={y + ROW_HEIGHT / 2 + 4}
-                fill={item.isProject ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.4)'}
+                fill={item.isProject ? 'rgba(255,255,255,0.7)' : item.status === 'done' ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.4)'}
                 fontSize={item.isProject ? 12 : 11}
                 fontWeight={item.isProject ? 600 : 400}
                 fontFamily="system-ui"
+                textDecoration={item.status === 'done' ? 'line-through' : 'none'}
               >
-                {item.label.length > 26 ? item.label.slice(0, 24) + '...' : item.label}
+                {item.label.length > 24 ? item.label.slice(0, 22) + '...' : item.label}
               </text>
 
               {/* Bar */}
@@ -207,9 +322,10 @@ export default function GanttChart({ projects, onTaskClick, onProjectClick }: Ga
                 height={ROW_HEIGHT - 12}
                 rx={item.isProject ? 3 : 2}
                 fill={item.color}
-                opacity={opacity}
-                stroke={isHovered ? '#fff' : 'none'}
-                strokeWidth={isHovered ? 1 : 0}
+                opacity={isDragging ? 0.9 : opacity}
+                stroke={isDragging ? '#ff0' : isHovered ? '#fff' : 'none'}
+                strokeWidth={isDragging ? 1.5 : isHovered ? 1 : 0}
+                onMouseDown={(e) => handleBarMouseDown(e, item)}
               />
 
               {/* Status indicator for tasks */}
@@ -224,8 +340,8 @@ export default function GanttChart({ projects, onTaskClick, onProjectClick }: Ga
                 </text>
               )}
 
-              {/* Tooltip on hover */}
-              {isHovered && (
+              {/* Tooltip on hover or during drag */}
+              {(isHovered || isDragging) && (
                 <g>
                   <rect
                     x={LABEL_WIDTH + barStart + barWidth + 4}
@@ -234,16 +350,18 @@ export default function GanttChart({ projects, onTaskClick, onProjectClick }: Ga
                     height={ROW_HEIGHT - 4}
                     rx={4}
                     fill="rgba(0,0,0,0.85)"
-                    stroke="rgba(255,255,255,0.15)"
+                    stroke={isDragging ? 'rgba(255,255,0,0.3)' : 'rgba(255,255,255,0.15)'}
                   />
                   <text
                     x={LABEL_WIDTH + barStart + barWidth + 12}
                     y={y + ROW_HEIGHT / 2 + 4}
-                    fill="rgba(255,255,255,0.7)"
+                    fill={isDragging ? 'rgba(255,255,0,0.9)' : 'rgba(255,255,255,0.7)'}
                     fontSize={10}
                     fontFamily="monospace"
                   >
-                    {formatDate(item.start)} → {formatDate(item.end)}
+                    {isDragging
+                      ? `${formatDate(addDays(item.start, dragState.dayOffset))} → ${formatDate(addDays(item.end, dragState.dayOffset))}`
+                      : `${formatDate(item.start)} → ${formatDate(item.end)}`}
                   </text>
                 </g>
               )}
