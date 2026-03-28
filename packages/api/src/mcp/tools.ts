@@ -14,7 +14,7 @@ import { computeInfluenceScores, detectMicroCommunities, findWarmPath, getSocial
 import { analyzeCommPatterns, detectAvailability, getSmartReengagement } from '../services/intelligence.js';
 import { searchCampaigns, createCampaign, getCampaignMembers, getCampaignWithStats, addBulkCampaignMembers, updateCampaignMember, addCampaignMember } from '../services/campaigns.js';
 import { getDailyCadenceReport, getWeeklyCadenceStats, formatCadenceReport, formatWeeklyStats } from '../services/cadence.js';
-import { listProjects, createProject, getProjectWithTasks, listTasks, createTask, updateTask } from '../services/projects.js';
+import { listProjects, createProject, getProjectWithTasks, listTasks, createTask, updateTask, createEventProjectWithTasks } from '../services/projects.js';
 
 // Helper: resolve a person name to an ID, creating if needed
 async function resolvePersonId(name: string): Promise<string> {
@@ -312,6 +312,7 @@ export const tools: ToolDefinition[] = [
           description: 'Structured attendees with roles (name resolution supported)',
         },
         tags: { type: 'array', items: { type: 'string' }, description: 'Event tags' },
+        createChecklist: { type: 'boolean', description: 'If true, auto-create a project with template event tasks (venue, invites, catering, etc.)' },
       },
       required: ['name', 'date'],
     },
@@ -340,7 +341,17 @@ export const tools: ToolDefinition[] = [
         attendees: resolvedAttendees,
         tags: args.tags as string[] | undefined,
       });
-      return { success: true, event };
+
+      let projectWithTasks = null;
+      if (args.createChecklist) {
+        projectWithTasks = await createEventProjectWithTasks(
+          event.id,
+          event.name,
+          new Date(event.date),
+        );
+      }
+
+      return { success: true, event, ...(projectWithTasks ? { project: projectWithTasks } : {}) };
     },
   },
 

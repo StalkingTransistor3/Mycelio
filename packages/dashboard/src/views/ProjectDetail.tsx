@@ -74,6 +74,10 @@ export default function ProjectDetail() {
     updateTask.mutate({ taskId, data: { status } });
   };
 
+  const handleTaskDateChange = (_taskId: string, _projectId: string, startDate: string, dueDate: string) => {
+    updateTask.mutate({ taskId: _taskId, data: { startDate, dueDate } });
+  };
+
   return (
     <div>
       {/* Header */}
@@ -122,7 +126,7 @@ export default function ProjectDetail() {
 
       {/* Gantt View */}
       {view === 'gantt' && (
-        <GanttChart projects={[project as ProjectWithTasks]} />
+        <GanttChart projects={[project as ProjectWithTasks]} onTaskDateChange={handleTaskDateChange} />
       )}
 
       {/* List View */}

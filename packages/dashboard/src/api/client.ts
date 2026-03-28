@@ -42,6 +42,8 @@ export const api = {
   getEvent: (id: string) => request<{ data: unknown }>(`/events/${id}`),
   createEvent: (data: unknown) => request<{ data: unknown }>('/events', { method: 'POST', body: JSON.stringify(data) }),
   updateEvent: (id: string, data: unknown) => request<{ data: unknown }>(`/events/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getEventProject: (eventId: string) => request<{ data: unknown }>(`/events/${eventId}/project`),
+  createEventProject: (eventId: string) => request<{ data: unknown }>(`/events/${eventId}/project`, { method: 'POST' }),
 
   // Organizations
   getOrganizations: (params?: Record<string, string>) => {

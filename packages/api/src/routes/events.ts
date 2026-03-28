@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { createEvent, getEvents, getEventById, updateEvent } from '../services/events.js';
+import { getProjectByEventId, createEventProjectWithTasks, getProjectWithTasks } from '../services/projects.js';
 
 export async function eventsRoutes(app: FastifyInstance) {
   // GET /api/events
@@ -55,5 +56,37 @@ export async function eventsRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: 'Not found', message: 'Event not found', statusCode: 404 });
     }
     return { data: event };
+  });
+
+  // GET /api/events/:id/project — get linked project with tasks
+  app.get('/events/:id/project', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const event = await getEventById(id);
+    if (!event) {
+      return reply.code(404).send({ error: 'Not found', message: 'Event not found', statusCode: 404 });
+    }
+    const project = await getProjectByEventId(id);
+    if (!project) {
+      return { data: null };
+    }
+    const projectWithTasks = await getProjectWithTasks(project.id);
+    return { data: projectWithTasks };
+  });
+
+  // POST /api/events/:id/project — create a project linked to this event with template tasks
+  app.post('/events/:id/project', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const event = await getEventById(id);
+    if (!event) {
+      return reply.code(404).send({ error: 'Not found', message: 'Event not found', statusCode: 404 });
+    }
+    // Check if project already exists
+    const existing = await getProjectByEventId(id);
+    if (existing) {
+      const projectWithTasks = await getProjectWithTasks(existing.id);
+      return { data: projectWithTasks };
+    }
+    const projectWithTasks = await createEventProjectWithTasks(id, event.name, new Date(event.date));
+    return reply.code(201).send({ data: projectWithTasks });
   });
 }

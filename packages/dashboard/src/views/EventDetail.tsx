@@ -1,12 +1,15 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useEvent } from '../hooks/useEvents.js';
 import { api } from '../api/client.js';
-import { useQuery } from '@tanstack/react-query';
-import type { Person, EventAttendee } from '@mycelio/shared';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { Person, EventAttendee, Task, ProjectWithTasks } from '@mycelio/shared';
 
 export default function EventDetail() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
   const { data: event, isLoading } = useEvent(id!);
+  const [togglingTaskId, setTogglingTaskId] = useState<string | null>(null);
 
   const { data: attendees } = useQuery({
     queryKey: ['event-attendees', id],
@@ -24,6 +27,32 @@ export default function EventDetail() {
       return results;
     },
     enabled: !!event?.attendeeIds?.length,
+  });
+
+  const { data: eventProject, isLoading: isLoadingProject } = useQuery({
+    queryKey: ['event-project', id],
+    queryFn: async () => {
+      const res = await api.getEventProject(id!);
+      return res.data as ProjectWithTasks | null;
+    },
+    enabled: !!id,
+  });
+
+  const createChecklistMutation = useMutation({
+    mutationFn: () => api.createEventProject(id!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['event-project', id] });
+    },
+  });
+
+  const toggleTaskMutation = useMutation({
+    mutationFn: async ({ taskId, currentStatus }: { taskId: string; currentStatus: string }) => {
+      const newStatus = currentStatus === 'done' ? 'todo' : 'done';
+      return api.updateTask(taskId, { status: newStatus });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['event-project', id] });
+    },
   });
 
   if (isLoading) return <p className="text-white/30 animate-pulse">Loading...</p>;
@@ -170,6 +199,112 @@ export default function EventDetail() {
             <p className="text-white/30 animate-pulse text-sm">Loading attendees...</p>
           )}
         </div>
+      </div>
+
+      {/* Tasks / Checklist Section */}
+      <div className="glass rounded-xl p-6 neon-border">
+        <h3 className="text-sm font-medium text-white/30 uppercase tracking-wider mb-4">
+          Event Checklist
+        </h3>
+
+        {isLoadingProject ? (
+          <p className="text-white/30 animate-pulse text-sm">Loading checklist...</p>
+        ) : !eventProject ? (
+          <div className="text-center py-6">
+            <p className="text-white/20 text-sm mb-4">No checklist created for this event yet.</p>
+            <button
+              onClick={() => createChecklistMutation.mutate()}
+              disabled={createChecklistMutation.isPending}
+              className="px-6 py-2 text-sm font-mono text-neon-cyan border border-neon-cyan/30 rounded-lg bg-neon-cyan/5 hover:bg-neon-cyan/15 transition-colors disabled:opacity-50"
+            >
+              {createChecklistMutation.isPending ? 'Creating...' : 'Create Event Checklist'}
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {eventProject.tasks && eventProject.tasks.length > 0 ? (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs text-white/30 font-mono">
+                    {eventProject.tasks.filter((t: Task) => t.status === 'done').length} / {eventProject.tasks.length} completed
+                  </p>
+                  <Link
+                    to={`/projects/${eventProject.id}`}
+                    className="text-xs text-neon-cyan/50 hover:text-neon-cyan transition-colors"
+                  >
+                    View Project &rarr;
+                  </Link>
+                </div>
+                {/* Progress bar */}
+                <div className="w-full h-1.5 bg-white/5 rounded-full mb-4 overflow-hidden">
+                  <div
+                    className="h-full bg-neon-cyan/60 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${eventProject.tasks.length > 0 ? Math.round((eventProject.tasks.filter((t: Task) => t.status === 'done').length / eventProject.tasks.length) * 100) : 0}%`,
+                    }}
+                  />
+                </div>
+                {eventProject.tasks.map((task: Task) => {
+                  const isDone = task.status === 'done';
+                  const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+                  const isOverdue = dueDate && dueDate < new Date() && !isDone;
+                  const isToggling = togglingTaskId === task.id;
+
+                  return (
+                    <button
+                      key={task.id}
+                      onClick={() => {
+                        setTogglingTaskId(task.id);
+                        toggleTaskMutation.mutate(
+                          { taskId: task.id, currentStatus: task.status },
+                          { onSettled: () => setTogglingTaskId(null) }
+                        );
+                      }}
+                      disabled={isToggling}
+                      className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-all text-left ${
+                        isDone
+                          ? 'bg-white/[0.02] border-white/5'
+                          : isOverdue
+                            ? 'bg-red-500/5 border-red-500/20 hover:bg-red-500/10'
+                            : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06]'
+                      } ${isToggling ? 'opacity-50' : ''}`}
+                    >
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                        isDone
+                          ? 'bg-neon-green/20 border-neon-green/50'
+                          : 'border-white/20'
+                      }`}>
+                        {isDone && (
+                          <svg className="w-3 h-3 text-neon-green" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm ${isDone ? 'text-white/30 line-through' : 'text-white/80'}`}>
+                          {task.title}
+                        </p>
+                      </div>
+                      {dueDate && (
+                        <span className={`text-xs font-mono flex-shrink-0 ${
+                          isDone
+                            ? 'text-white/20'
+                            : isOverdue
+                              ? 'text-red-400'
+                              : 'text-white/30'
+                        }`}>
+                          {dueDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </>
+            ) : (
+              <p className="text-white/20 text-sm">No tasks in checklist.</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

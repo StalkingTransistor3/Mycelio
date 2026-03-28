@@ -331,17 +331,26 @@ export type ProjectStatus = 'active' | 'completed' | 'on_hold' | 'archived';
 
 export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked';
 
+export interface ProjectTaskStats {
+  total: number;
+  completed: number;
+  percentage: number;
+}
+
 export interface Project {
   id: string;
   name: string;
   description: string | null;
   status: ProjectStatus;
+  eventId: string | null;
+  eventName?: string;
   startDate: string | null;
   endDate: string | null;
   tags: string[];
   color: string;
   createdAt: string;
   updatedAt: string;
+  taskStats?: ProjectTaskStats;
 }
 
 export interface Task {

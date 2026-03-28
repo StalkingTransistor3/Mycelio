@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import {
   listProjects,
+  listProjectsWithStats,
   getProjectWithTasks,
   createProject,
   updateProject,
@@ -17,7 +18,7 @@ export async function projectsRoutes(app: FastifyInstance) {
   // GET /api/projects
   app.get('/projects', async (request) => {
     const query = request.query as Record<string, string>;
-    const data = await listProjects({
+    const data = await listProjectsWithStats({
       query: query.q,
       status: query.status,
       tags: query.tags ? query.tags.split(',') : undefined,
@@ -49,6 +50,7 @@ export async function projectsRoutes(app: FastifyInstance) {
       name: string;
       description?: string;
       status?: string;
+      eventId?: string;
       startDate?: string;
       endDate?: string;
       tags?: string[];

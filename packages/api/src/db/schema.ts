@@ -142,6 +142,7 @@ export const projects = pgTable('projects', {
   name: varchar('name', { length: 255 }).notNull(),
   description: text('description'),
   status: varchar('status', { length: 30 }).notNull().default('active'),
+  eventId: uuid('event_id').references(() => events.id),
   startDate: timestamp('start_date', { withTimezone: true }),
   endDate: timestamp('end_date', { withTimezone: true }),
   tags: jsonb('tags').$type<string[]>().notNull().default([]),

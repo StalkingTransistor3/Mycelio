@@ -1,4 +1,4 @@
-import { eq, ilike, and, desc, asc } from 'drizzle-orm';
+import { eq, ilike, and, desc, asc, inArray, count } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 
 const { projects, tasks } = schema;
@@ -42,6 +42,43 @@ export async function listProjects(params?: {
   return results;
 }
 
+export async function listProjectsWithStats(params?: Parameters<typeof listProjects>[0]) {
+  const results = await listProjects(params);
+  if (results.length === 0) return results;
+
+  const projectIds = results.map((p) => p.id);
+
+  const taskCounts = await db
+    .select({
+      projectId: tasks.projectId,
+      status: tasks.status,
+      count: count(),
+    })
+    .from(tasks)
+    .where(inArray(tasks.projectId, projectIds))
+    .groupBy(tasks.projectId, tasks.status);
+
+  const statsMap = new Map<string, { total: number; completed: number }>();
+  for (const row of taskCounts) {
+    const entry = statsMap.get(row.projectId) || { total: 0, completed: 0 };
+    entry.total += row.count;
+    if (row.status === 'done') entry.completed += row.count;
+    statsMap.set(row.projectId, entry);
+  }
+
+  return results.map((p) => {
+    const stats = statsMap.get(p.id) || { total: 0, completed: 0 };
+    return {
+      ...p,
+      taskStats: {
+        total: stats.total,
+        completed: stats.completed,
+        percentage: stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0,
+      },
+    };
+  });
+}
+
 export async function getProjectById(id: string) {
   const result = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
   return result[0] || null;
@@ -64,6 +101,7 @@ export async function createProject(data: {
   name: string;
   description?: string;
   status?: string;
+  eventId?: string;
   startDate?: Date;
   endDate?: Date;
   tags?: string[];
@@ -75,6 +113,7 @@ export async function createProject(data: {
       name: data.name,
       description: data.description || null,
       status: data.status || 'active',
+      eventId: data.eventId || null,
       startDate: data.startDate || null,
       endDate: data.endDate || null,
       tags: data.tags || [],
@@ -82,6 +121,52 @@ export async function createProject(data: {
     })
     .returning();
   return result[0];
+}
+
+export async function getProjectByEventId(eventId: string) {
+  const result = await db.select().from(projects).where(eq(projects.eventId, eventId)).limit(1);
+  return result[0] || null;
+}
+
+export async function createEventProjectWithTasks(eventId: string, eventName: string, eventDate: Date) {
+  // Create the project linked to the event
+  const project = await createProject({
+    name: `Event: ${eventName}`,
+    description: `Checklist for event "${eventName}"`,
+    status: 'active',
+    eventId,
+    startDate: new Date(eventDate.getTime() - 14 * 24 * 60 * 60 * 1000), // 14 days before
+    endDate: new Date(eventDate.getTime() + 3 * 24 * 60 * 60 * 1000), // 3 days after
+    tags: ['event-checklist'],
+    color: '#ff6ec7',
+  });
+
+  // Template tasks with relative offsets (negative = before event, positive = after)
+  const templateTasks = [
+    { title: 'Book and confirm venue', dayOffset: -14, priority: 0 },
+    { title: 'Create event page and publish', dayOffset: -14, priority: 1 },
+    { title: 'Send invitations / promote', dayOffset: -10, priority: 2 },
+    { title: 'Confirm catering / food', dayOffset: -7, priority: 3 },
+    { title: 'Prepare content / slides / materials', dayOffset: -3, priority: 4 },
+    { title: 'Day-of logistics check', dayOffset: 0, priority: 5 },
+    { title: 'Send thank you / follow-ups', dayOffset: 2, priority: 6 },
+    { title: 'Debrief and log learnings', dayOffset: 3, priority: 7 },
+  ];
+
+  const createdTasks = [];
+  for (const tmpl of templateTasks) {
+    const dueDate = new Date(eventDate.getTime() + tmpl.dayOffset * 24 * 60 * 60 * 1000);
+    const task = await createTask({
+      projectId: project.id,
+      title: tmpl.title,
+      priority: tmpl.priority,
+      dueDate,
+      tags: ['event-checklist'],
+    });
+    createdTasks.push(task);
+  }
+
+  return { ...project, tasks: createdTasks };
 }
 
 export async function updateProject(id: string, data: Record<string, unknown>) {

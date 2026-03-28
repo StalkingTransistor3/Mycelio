@@ -98,6 +98,27 @@ export default function ProjectList() {
             {project.description && (
               <p className="text-xs text-white/20 mb-3 line-clamp-2">{project.description}</p>
             )}
+            {project.taskStats && project.taskStats.total > 0 && (
+              <div className="mb-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-white/30">
+                    {project.taskStats.completed}/{project.taskStats.total} tasks
+                  </span>
+                  <span className="text-[10px] text-white/40 font-medium">
+                    {project.taskStats.percentage}%
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{
+                      width: `${project.taskStats.percentage}%`,
+                      backgroundColor: project.taskStats.percentage === 100 ? '#00ff88' : project.color,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             <div className="flex gap-1 flex-wrap mb-2">
               {project.tags.map((tag: string) => (
                 <span key={tag} className="px-2 py-0.5 text-[10px] bg-white/5 text-white/30 rounded border border-white/5">
