@@ -162,6 +162,8 @@ export interface Interaction {
   createdAt: string;
 }
 
+export type EventStatus = 'upcoming' | 'planning' | 'promoted' | 'live' | 'completed' | 'debriefed';
+
 export interface Event {
   id: string;
   name: string;
@@ -170,6 +172,8 @@ export interface Event {
   location: string | null;
   description: string | null;
   url: string | null;
+  isOrganizer: number; // 1 = my event, 0 = attending
+  status: EventStatus | null;
   attendeeIds: string[];
   attendees: EventAttendee[];
   tags: string[];

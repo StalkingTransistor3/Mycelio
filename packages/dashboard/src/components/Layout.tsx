@@ -3,7 +3,8 @@ import { NavLink, Outlet } from 'react-router-dom';
 const navItems = [
   { to: '/', label: 'Overview', icon: '◈' },
   { to: '/people', label: 'People', icon: '⬡' },
-  { to: '/events', label: 'Events', icon: '◆' },
+  { to: '/my-events', label: 'My Events', icon: '★' },
+  { to: '/events', label: 'All Events', icon: '◆' },
   { to: '/organisations', label: 'Organisations', icon: '⬢' },
   { to: '/follow-ups', label: 'Follow-ups', icon: '◉' },
   { to: '/pipeline', label: 'Pipeline', icon: '▸' },

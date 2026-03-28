@@ -96,6 +96,8 @@ export const events = pgTable('events', {
   location: varchar('location', { length: 255 }),
   description: text('description'),
   url: varchar('url', { length: 500 }),
+  isOrganizer: integer('is_organizer').notNull().default(0), // 1 = Andrew's event, 0 = attending
+  status: varchar('event_status', { length: 30 }).default('upcoming'), // upcoming, planning, promoted, live, completed, debriefed
   attendeeIds: jsonb('attendee_ids').$type<string[]>().notNull().default([]),
   attendees: jsonb('attendees').$type<{ personId: string; role: string }[]>().notNull().default([]),
   tags: jsonb('tags').$type<string[]>().notNull().default([]),

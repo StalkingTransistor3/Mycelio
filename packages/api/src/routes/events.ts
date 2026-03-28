@@ -10,6 +10,13 @@ export async function eventsRoutes(app: FastifyInstance) {
     return { data };
   });
 
+  // GET /api/events/mine — only events where isOrganizer=1
+  app.get('/events/mine', async (request) => {
+    const query = request.query as Record<string, string>;
+    const data = await getEvents(query.limit ? parseInt(query.limit) : undefined, true);
+    return { data };
+  });
+
   // GET /api/events/:id
   app.get('/events/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -28,6 +35,8 @@ export async function eventsRoutes(app: FastifyInstance) {
       location?: string;
       description?: string;
       url?: string;
+      isOrganizer?: number;
+      status?: string;
       attendeeIds?: string[];
       attendees?: { personId: string; role: string }[];
       tags?: string[];

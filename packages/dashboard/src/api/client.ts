@@ -39,6 +39,7 @@ export const api = {
 
   // Events
   getEvents: () => request<{ data: unknown[] }>('/events'),
+  getMyEvents: () => request<{ data: unknown[] }>('/events/mine'),
   getEvent: (id: string) => request<{ data: unknown }>(`/events/${id}`),
   createEvent: (data: unknown) => request<{ data: unknown }>('/events', { method: 'POST', body: JSON.stringify(data) }),
   updateEvent: (id: string, data: unknown) => request<{ data: unknown }>(`/events/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

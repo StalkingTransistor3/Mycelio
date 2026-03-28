@@ -16,6 +16,7 @@ import ProjectList from './views/ProjectList.js';
 import ProjectDetail from './views/ProjectDetail.js';
 import GanttView from './views/GanttView.js';
 import GraphView from './views/GraphView.js';
+import MyEvents from './views/MyEvents.js';
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/" element={<Overview />} />
         <Route path="/people" element={<PeopleList />} />
         <Route path="/people/:id" element={<PersonDetail />} />
+        <Route path="/my-events" element={<MyEvents />} />
         <Route path="/events" element={<EventList />} />
         <Route path="/events/:id" element={<EventDetail />} />
         <Route path="/organisations" element={<OrganizationList />} />
