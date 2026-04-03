@@ -462,6 +462,63 @@ export interface CampaignSearchParams {
   offset?: number;
 }
 
+// ── Person Relationships (network edges) ──
+
+export type PersonRelationshipType =
+  | 'colleague'
+  | 'friend'
+  | 'mentor'
+  | 'investor'
+  | 'advisor'
+  | 'introducer'
+  | 'partner'
+  | 'client'
+  | 'co-founder'
+  | 'other';
+
+export interface PersonRelationship {
+  id: string;
+  personAId: string;
+  personBId: string;
+  type: PersonRelationshipType;
+  strength: number; // 1-5
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PersonRelationshipEnriched extends PersonRelationship {
+  personA: { id: string; name: string; title: string | null; tier: number };
+  personB: { id: string; name: string; title: string | null; tier: number };
+}
+
+// ── Organization Relationships (network edges) ──
+
+export type OrgRelationshipType =
+  | 'customer-vendor'
+  | 'partnership'
+  | 'investor-portfolio'
+  | 'competitor'
+  | 'subsidiary'
+  | 'sponsor'
+  | 'member'
+  | 'other';
+
+export interface OrgRelationship {
+  id: string;
+  orgAId: string;
+  orgBId: string;
+  type: OrgRelationshipType;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrgRelationshipEnriched extends OrgRelationship {
+  orgA: { id: string; name: string; type: string };
+  orgB: { id: string; name: string; type: string };
+}
+
 export interface CampaignMemberSearchParams {
   query?: string;
   status?: CampaignMemberStatus;

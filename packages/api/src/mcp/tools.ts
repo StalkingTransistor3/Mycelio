@@ -15,6 +15,16 @@ import { analyzeCommPatterns, detectAvailability, getSmartReengagement } from '.
 import { searchCampaigns, createCampaign, getCampaignMembers, getCampaignWithStats, addBulkCampaignMembers, updateCampaignMember, addCampaignMember } from '../services/campaigns.js';
 import { getDailyCadenceReport, getWeeklyCadenceStats, formatCadenceReport, formatWeeklyStats } from '../services/cadence.js';
 import { listProjects, createProject, getProjectWithTasks, listTasks, createTask, updateTask, createEventProjectWithTasks } from '../services/projects.js';
+import {
+  createPersonRelationship,
+  getPersonRelationships,
+  updatePersonRelationship,
+  deletePersonRelationship,
+  createOrgRelationship,
+  getOrgRelationships,
+  updateOrgRelationship,
+  deleteOrgRelationship,
+} from '../services/relationships.js';
 
 // Helper: resolve a person name to an ID, creating if needed
 async function resolvePersonId(name: string): Promise<string> {
@@ -38,6 +48,15 @@ async function resolveCampaignId(name: string): Promise<string | null> {
   const allCampaigns = await searchCampaigns({ limit: 500 });
   const match = allCampaigns.find(c =>
     c.name.toLowerCase().includes(name.toLowerCase())
+  );
+  return match?.id || null;
+}
+
+// Helper: resolve an organization name to an ID
+async function resolveOrgId(name: string): Promise<string | null> {
+  const allOrgs = await getOrganizations();
+  const match = allOrgs.find(o =>
+    o.name.toLowerCase().includes(name.toLowerCase())
   );
   return match?.id || null;
 }
@@ -1584,6 +1603,227 @@ export const tools: ToolDefinition[] = [
         limit: args.limit as number | undefined,
       });
       return { tasks, count: tasks.length };
+    },
+  },
+
+  // 44. add_person_relationship
+  {
+    name: 'add_person_relationship',
+    description: 'Create a relationship between two people. Types: colleague, friend, mentor, investor, advisor, introducer, partner, client, co-founder, other. Strength is 1-5 (1=weak, 5=strongest).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personAName: { type: 'string', description: 'Name of the first person' },
+        personAId: { type: 'string', description: 'UUID of the first person (if known)' },
+        personBName: { type: 'string', description: 'Name of the second person' },
+        personBId: { type: 'string', description: 'UUID of the second person (if known)' },
+        type: {
+          type: 'string',
+          enum: ['colleague', 'friend', 'mentor', 'investor', 'advisor', 'introducer', 'partner', 'client', 'co-founder', 'other'],
+          description: 'Relationship type',
+        },
+        strength: { type: 'number', description: 'Relationship strength 1-5 (default: 3)' },
+        notes: { type: 'string', description: 'Notes about this relationship' },
+      },
+      required: ['type'],
+    },
+    handler: async (args) => {
+      let personAId = args.personAId as string | undefined;
+      let personBId = args.personBId as string | undefined;
+
+      if (!personAId && args.personAName) {
+        personAId = await resolvePersonId(args.personAName as string);
+      }
+      if (!personBId && args.personBName) {
+        personBId = await resolvePersonId(args.personBName as string);
+      }
+      if (!personAId || !personBId) return { error: 'Both persons are required (by ID or name)' };
+
+      const rel = await createPersonRelationship({
+        personAId,
+        personBId,
+        type: args.type as any,
+        strength: args.strength as number | undefined,
+        notes: args.notes as string | undefined,
+      });
+      return { success: true, relationship: rel };
+    },
+  },
+
+  // 45. query_person_relationships
+  {
+    name: 'query_person_relationships',
+    description: 'Query person-to-person relationships. Optionally filter by a specific person. Returns enriched data with person names.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'Filter relationships for this person UUID' },
+        personName: { type: 'string', description: 'Filter relationships for this person (by name)' },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        const results = await searchPeople({ query: args.personName as string, limit: 1 });
+        personId = results.length > 0 ? results[0].id : undefined;
+      }
+      const relationships = await getPersonRelationships(personId);
+      return { relationships, count: relationships.length };
+    },
+  },
+
+  // 46. update_person_relationship
+  {
+    name: 'update_person_relationship',
+    description: 'Update an existing person-to-person relationship. Change type, strength, or notes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        relationshipId: { type: 'string', description: 'UUID of the relationship to update' },
+        type: {
+          type: 'string',
+          enum: ['colleague', 'friend', 'mentor', 'investor', 'advisor', 'introducer', 'partner', 'client', 'co-founder', 'other'],
+          description: 'New relationship type',
+        },
+        strength: { type: 'number', description: 'New strength 1-5' },
+        notes: { type: 'string', description: 'Updated notes' },
+      },
+      required: ['relationshipId'],
+    },
+    handler: async (args) => {
+      const rel = await updatePersonRelationship(args.relationshipId as string, {
+        type: args.type as string | undefined,
+        strength: args.strength as number | undefined,
+        notes: args.notes as string | undefined,
+      });
+      if (!rel) return { error: 'Relationship not found' };
+      return { success: true, relationship: rel };
+    },
+  },
+
+  // 47. delete_person_relationship
+  {
+    name: 'delete_person_relationship',
+    description: 'Delete a person-to-person relationship by ID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        relationshipId: { type: 'string', description: 'UUID of the relationship to delete' },
+      },
+      required: ['relationshipId'],
+    },
+    handler: async (args) => {
+      const rel = await deletePersonRelationship(args.relationshipId as string);
+      if (!rel) return { error: 'Relationship not found' };
+      return { success: true, deleted: rel };
+    },
+  },
+
+  // 48. add_org_relationship
+  {
+    name: 'add_org_relationship',
+    description: 'Create a relationship between two organizations. Types: customer-vendor, partnership, investor-portfolio, competitor, subsidiary, sponsor, member, other.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        orgAName: { type: 'string', description: 'Name of the first organization' },
+        orgAId: { type: 'string', description: 'UUID of the first organization (if known)' },
+        orgBName: { type: 'string', description: 'Name of the second organization' },
+        orgBId: { type: 'string', description: 'UUID of the second organization (if known)' },
+        type: {
+          type: 'string',
+          enum: ['customer-vendor', 'partnership', 'investor-portfolio', 'competitor', 'subsidiary', 'sponsor', 'member', 'other'],
+          description: 'Relationship type',
+        },
+        notes: { type: 'string', description: 'Notes about this relationship' },
+      },
+      required: ['type'],
+    },
+    handler: async (args) => {
+      let orgAId = args.orgAId as string | undefined;
+      let orgBId = args.orgBId as string | undefined;
+
+      if (!orgAId && args.orgAName) {
+        orgAId = (await resolveOrgId(args.orgAName as string)) || undefined;
+      }
+      if (!orgBId && args.orgBName) {
+        orgBId = (await resolveOrgId(args.orgBName as string)) || undefined;
+      }
+      if (!orgAId || !orgBId) return { error: 'Both organizations are required (by ID or name)' };
+
+      const rel = await createOrgRelationship({
+        orgAId,
+        orgBId,
+        type: args.type as any,
+        notes: args.notes as string | undefined,
+      });
+      return { success: true, relationship: rel };
+    },
+  },
+
+  // 49. query_org_relationships
+  {
+    name: 'query_org_relationships',
+    description: 'Query organization-to-organization relationships. Optionally filter by a specific org. Returns enriched data with org names.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        orgId: { type: 'string', description: 'Filter relationships for this organization UUID' },
+        orgName: { type: 'string', description: 'Filter relationships for this organization (by name)' },
+      },
+    },
+    handler: async (args) => {
+      let orgId = args.orgId as string | undefined;
+      if (!orgId && args.orgName) {
+        orgId = (await resolveOrgId(args.orgName as string)) || undefined;
+      }
+      const relationships = await getOrgRelationships(orgId);
+      return { relationships, count: relationships.length };
+    },
+  },
+
+  // 50. update_org_relationship
+  {
+    name: 'update_org_relationship',
+    description: 'Update an existing org-to-org relationship. Change type or notes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        relationshipId: { type: 'string', description: 'UUID of the relationship to update' },
+        type: {
+          type: 'string',
+          enum: ['customer-vendor', 'partnership', 'investor-portfolio', 'competitor', 'subsidiary', 'sponsor', 'member', 'other'],
+          description: 'New relationship type',
+        },
+        notes: { type: 'string', description: 'Updated notes' },
+      },
+      required: ['relationshipId'],
+    },
+    handler: async (args) => {
+      const rel = await updateOrgRelationship(args.relationshipId as string, {
+        type: args.type as string | undefined,
+        notes: args.notes as string | undefined,
+      });
+      if (!rel) return { error: 'Relationship not found' };
+      return { success: true, relationship: rel };
+    },
+  },
+
+  // 51. delete_org_relationship
+  {
+    name: 'delete_org_relationship',
+    description: 'Delete an org-to-org relationship by ID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        relationshipId: { type: 'string', description: 'UUID of the relationship to delete' },
+      },
+      required: ['relationshipId'],
+    },
+    handler: async (args) => {
+      const rel = await deleteOrgRelationship(args.relationshipId as string);
+      if (!rel) return { error: 'Relationship not found' };
+      return { success: true, deleted: rel };
     },
   },
 ];

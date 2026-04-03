@@ -170,4 +170,22 @@ export const api = {
   createTask: (projectId: string, data: unknown) => request<{ data: unknown }>(`/projects/${projectId}/tasks`, { method: 'POST', body: JSON.stringify(data) }),
   updateTask: (taskId: string, data: unknown) => request<{ data: unknown }>(`/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteTask: (taskId: string) => request<{ data: unknown }>(`/tasks/${taskId}`, { method: 'DELETE' }),
+
+  // Person Relationships
+  getPersonRelationships: (personId?: string) => {
+    const qs = personId ? `?personId=${personId}` : '';
+    return request<{ data: unknown[] }>(`/person-relationships${qs}`);
+  },
+  createPersonRelationship: (data: unknown) => request<{ data: unknown }>('/person-relationships', { method: 'POST', body: JSON.stringify(data) }),
+  updatePersonRelationship: (id: string, data: unknown) => request<{ data: unknown }>(`/person-relationships/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deletePersonRelationship: (id: string) => request<{ data: unknown }>(`/person-relationships/${id}`, { method: 'DELETE' }),
+
+  // Organization Relationships
+  getOrgRelationships: (orgId?: string) => {
+    const qs = orgId ? `?orgId=${orgId}` : '';
+    return request<{ data: unknown[] }>(`/org-relationships${qs}`);
+  },
+  createOrgRelationship: (data: unknown) => request<{ data: unknown }>('/org-relationships', { method: 'POST', body: JSON.stringify(data) }),
+  updateOrgRelationship: (id: string, data: unknown) => request<{ data: unknown }>(`/org-relationships/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteOrgRelationship: (id: string) => request<{ data: unknown }>(`/org-relationships/${id}`, { method: 'DELETE' }),
 };

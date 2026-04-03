@@ -12,7 +12,9 @@ const navItems = [
   { to: '/projects', label: 'Projects', icon: '▦' },
   { to: '/gantt', label: 'Gantt', icon: '▬' },
   { to: '/venues', label: 'Venues', icon: '⌂' },
-  { to: '/graph', label: 'Network', icon: '◇' },
+  { to: '/network/people', label: 'People Net', icon: '⬡' },
+  { to: '/network/orgs', label: 'Org Net', icon: '⬢' },
+  { to: '/graph', label: 'Graph', icon: '◇' },
 ];
 
 export default function Layout() {

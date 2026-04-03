@@ -17,6 +17,8 @@ import ProjectDetail from './views/ProjectDetail.js';
 import GanttView from './views/GanttView.js';
 import GraphView from './views/GraphView.js';
 import MyEvents from './views/MyEvents.js';
+import PersonNetwork from './views/PersonNetwork.js';
+import OrgNetwork from './views/OrgNetwork.js';
 
 export default function App() {
   return (
@@ -38,6 +40,8 @@ export default function App() {
         <Route path="/projects/:id" element={<ProjectDetail />} />
         <Route path="/gantt" element={<GanttView />} />
         <Route path="/venues" element={<VenueList />} />
+        <Route path="/network/people" element={<PersonNetwork />} />
+        <Route path="/network/orgs" element={<OrgNetwork />} />
         <Route path="/graph" element={<GraphView />} />
       </Route>
     </Routes>

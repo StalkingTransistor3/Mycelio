@@ -183,3 +183,26 @@ export const connections = pgTable('connections', {
   connectedAt: timestamp('connected_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ── Person Relationships (richer person-to-person network edges) ──
+export const personRelationships = pgTable('person_relationships', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  personAId: uuid('person_a_id').notNull().references(() => people.id, { onDelete: 'cascade' }),
+  personBId: uuid('person_b_id').notNull().references(() => people.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 50 }).notNull(),
+  strength: integer('strength').notNull().default(3),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── Organization Relationships (org-to-org network edges) ──
+export const orgRelationships = pgTable('org_relationships', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgAId: uuid('org_a_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  orgBId: uuid('org_b_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 50 }).notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
