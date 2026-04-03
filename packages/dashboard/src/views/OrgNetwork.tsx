@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useOrgRelationships, useCreateOrgRelationship, useDeleteOrgRelationship } from '../hooks/useRelationships.js';
 import { useOrganizations } from '../hooks/useOrganizations.js';
 import type { Organization, OrgRelationshipEnriched } from '@mycelio/shared';
 import Modal from '../components/Modal.js';
 import { Button } from '../components/FormField.js';
+import RelationshipGraph, { buildOrgGraphData } from '../components/RelationshipGraph.js';
 
 const ORG_REL_TYPES = [
   'customer-vendor', 'partnership', 'investor-portfolio',
@@ -22,6 +23,8 @@ const typeColors: Record<string, string> = {
   other: 'text-white/40 border-white/10 bg-white/5',
 };
 
+type ViewMode = 'list' | 'graph';
+
 export default function OrgNetwork() {
   const { data: relationships, isLoading } = useOrgRelationships();
   const createMutation = useCreateOrgRelationship();
@@ -31,6 +34,27 @@ export default function OrgNetwork() {
   const [filterType, setFilterType] = useState<string>('');
   const [filterOrg, setFilterOrg] = useState<string>('');
   const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+
+  // Graph container sizing
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const [graphSize, setGraphSize] = useState({ width: 800, height: 600 });
+
+  useEffect(() => {
+    if (viewMode !== 'graph') return;
+    const measure = () => {
+      if (graphContainerRef.current) {
+        const rect = graphContainerRef.current.getBoundingClientRect();
+        setGraphSize({
+          width: Math.max(rect.width, 400),
+          height: Math.max(window.innerHeight - rect.top - 24, 400),
+        });
+      }
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [viewMode]);
 
   // Form state
   const [orgAId, setOrgAId] = useState('');
@@ -77,6 +101,9 @@ export default function OrgNetwork() {
     return true;
   });
 
+  // Build graph data from filtered relationships
+  const graphData = useMemo(() => buildOrgGraphData(filtered), [filtered]);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -86,7 +113,32 @@ export default function OrgNetwork() {
             {relationships?.length || 0} relationships
           </p>
         </div>
-        <Button onClick={() => setShowAdd(true)}>+ Add Relationship</Button>
+        <div className="flex items-center gap-3">
+          {/* View mode toggle */}
+          <div className="glass rounded-lg border border-white/10 flex overflow-hidden">
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-1.5 text-xs font-mono transition-colors ${
+                viewMode === 'list'
+                  ? 'bg-neon-cyan/20 text-neon-cyan'
+                  : 'text-white/40 hover:text-white/60'
+              }`}
+            >
+              List
+            </button>
+            <button
+              onClick={() => setViewMode('graph')}
+              className={`px-3 py-1.5 text-xs font-mono transition-colors ${
+                viewMode === 'graph'
+                  ? 'bg-neon-cyan/20 text-neon-cyan'
+                  : 'text-white/40 hover:text-white/60'
+              }`}
+            >
+              Graph
+            </button>
+          </div>
+          <Button onClick={() => setShowAdd(true)}>+ Add Relationship</Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -122,54 +174,69 @@ export default function OrgNetwork() {
 
       {isLoading && <p className="text-white/30 animate-pulse">Loading...</p>}
 
-      {/* Relationship list */}
-      <div className="grid gap-3">
-        {filtered.map((rel: OrgRelationshipEnriched) => (
-          <div key={rel.id} className="glass rounded-xl p-4 neon-border flex items-center justify-between">
-            <div className="flex items-center gap-4 flex-1 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <Link
-                  to={`/organisations/${rel.orgA.id}`}
-                  className="text-neon-cyan hover:text-neon-cyan/80 font-medium truncate transition-colors"
-                >
-                  {rel.orgA.name}
-                </Link>
-                <span className="text-white/20 text-xs shrink-0">{rel.orgA.type}</span>
+      {/* Graph view */}
+      {viewMode === 'graph' && !isLoading && (
+        <div ref={graphContainerRef} className="glass rounded-xl neon-border overflow-hidden">
+          <RelationshipGraph
+            nodes={graphData.nodes}
+            links={graphData.links}
+            width={graphSize.width}
+            height={graphSize.height}
+            typeColorMap={graphData.typeColorMap}
+          />
+        </div>
+      )}
+
+      {/* List view */}
+      {viewMode === 'list' && (
+        <div className="grid gap-3">
+          {filtered.map((rel: OrgRelationshipEnriched) => (
+            <div key={rel.id} className="glass rounded-xl p-4 neon-border flex items-center justify-between">
+              <div className="flex items-center gap-4 flex-1 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Link
+                    to={`/organisations/${rel.orgA.id}`}
+                    className="text-neon-cyan hover:text-neon-cyan/80 font-medium truncate transition-colors"
+                  >
+                    {rel.orgA.name}
+                  </Link>
+                  <span className="text-white/20 text-xs shrink-0">{rel.orgA.type}</span>
+                </div>
+
+                <span className={`px-2 py-0.5 text-xs font-mono rounded border shrink-0 ${typeColors[rel.type] || typeColors.other}`}>
+                  {rel.type}
+                </span>
+
+                <div className="flex items-center gap-2 min-w-0">
+                  <Link
+                    to={`/organisations/${rel.orgB.id}`}
+                    className="text-neon-cyan hover:text-neon-cyan/80 font-medium truncate transition-colors"
+                  >
+                    {rel.orgB.name}
+                  </Link>
+                  <span className="text-white/20 text-xs shrink-0">{rel.orgB.type}</span>
+                </div>
               </div>
 
-              <span className={`px-2 py-0.5 text-xs font-mono rounded border shrink-0 ${typeColors[rel.type] || typeColors.other}`}>
-                {rel.type}
-              </span>
+              {rel.notes && (
+                <span className="text-white/30 text-xs ml-4 truncate max-w-[200px]">{rel.notes}</span>
+              )}
 
-              <div className="flex items-center gap-2 min-w-0">
-                <Link
-                  to={`/organisations/${rel.orgB.id}`}
-                  className="text-neon-cyan hover:text-neon-cyan/80 font-medium truncate transition-colors"
-                >
-                  {rel.orgB.name}
-                </Link>
-                <span className="text-white/20 text-xs shrink-0">{rel.orgB.type}</span>
-              </div>
+              <button
+                onClick={() => deleteMutation.mutate(rel.id)}
+                className="ml-4 text-white/20 hover:text-red-400 text-xs transition-colors shrink-0"
+                title="Delete"
+              >
+                x
+              </button>
             </div>
+          ))}
 
-            {rel.notes && (
-              <span className="text-white/30 text-xs ml-4 truncate max-w-[200px]">{rel.notes}</span>
-            )}
-
-            <button
-              onClick={() => deleteMutation.mutate(rel.id)}
-              className="ml-4 text-white/20 hover:text-red-400 text-xs transition-colors shrink-0"
-              title="Delete"
-            >
-              x
-            </button>
-          </div>
-        ))}
-
-        {!isLoading && filtered.length === 0 && (
-          <p className="text-white/20 text-center py-12">No organization relationships yet.</p>
-        )}
-      </div>
+          {!isLoading && filtered.length === 0 && (
+            <p className="text-white/20 text-center py-12">No organization relationships yet.</p>
+          )}
+        </div>
+      )}
 
       {/* Add Modal */}
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Org Relationship">
