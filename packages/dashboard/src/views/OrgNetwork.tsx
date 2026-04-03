@@ -29,6 +29,7 @@ export default function OrgNetwork() {
   const { data: allOrgs } = useOrganizations();
   const [showAdd, setShowAdd] = useState(false);
   const [filterType, setFilterType] = useState<string>('');
+  const [filterOrg, setFilterOrg] = useState<string>('');
   const [search, setSearch] = useState('');
 
   // Form state
@@ -52,8 +53,19 @@ export default function OrgNetwork() {
     setNotes('');
   };
 
+  // Build org filter options from orgs that appear in relationships
+  const orgOptions = (() => {
+    const seen = new Map<string, string>();
+    for (const r of (relationships || []) as OrgRelationshipEnriched[]) {
+      if (!seen.has(r.orgA.id)) seen.set(r.orgA.id, r.orgA.name);
+      if (!seen.has(r.orgB.id)) seen.set(r.orgB.id, r.orgB.name);
+    }
+    return Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  })();
+
   const filtered = (relationships || []).filter((r: OrgRelationshipEnriched) => {
     if (filterType && r.type !== filterType) return false;
+    if (filterOrg && r.orgA.id !== filterOrg && r.orgB.id !== filterOrg) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
@@ -86,6 +98,16 @@ export default function OrgNetwork() {
           onChange={(e) => setSearch(e.target.value)}
           className="glass px-3 py-2 rounded-lg text-sm text-white/80 border border-white/10 focus:border-neon-cyan/50 outline-none w-64"
         />
+        <select
+          value={filterOrg}
+          onChange={(e) => setFilterOrg(e.target.value)}
+          className="glass px-3 py-2 rounded-lg text-sm text-white/80 border border-white/10 bg-transparent"
+        >
+          <option value="">All organizations</option>
+          {orgOptions.map(([id, name]) => (
+            <option key={id} value={id}>{name}</option>
+          ))}
+        </select>
         <select
           value={filterType}
           onChange={(e) => setFilterType(e.target.value)}
