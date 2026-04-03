@@ -127,6 +127,7 @@ export interface Person {
   followUpConfig: FollowUpConfig | null;
   snoozedUntil: string | null;
   notes: string | null;
+  archived: boolean;
   lastContactAt: string | null;
   nextFollowUpAt: string | null;
   createdAt: string;
@@ -143,6 +144,7 @@ export interface Organization {
   notes: string | null;
   memberIds: string[];
   tags: string[];
+  archived: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -216,6 +218,7 @@ export interface PeopleSearchParams {
   tier?: RelationshipTier;
   tags?: string[];
   organizationId?: string;
+  includeArchived?: boolean;
   limit?: number;
   offset?: number;
 }

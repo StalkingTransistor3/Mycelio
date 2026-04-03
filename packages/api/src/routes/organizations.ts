@@ -4,16 +4,18 @@ import {
   getOrganizationById,
   createOrganization,
   updateOrganization,
+  archiveOrganization,
+  deleteOrganization,
   getOrganizationHealth,
   getOrganizationMembers,
 } from '../services/organizations.js';
 import { findDuplicateOrgs, mergeOrgs } from '../services/deduplication.js';
 
 export async function organizationsRoutes(app: FastifyInstance) {
-  // GET /api/organizations?type=community
+  // GET /api/organizations?type=community&includeArchived=true
   app.get('/organizations', async (request) => {
-    const { type } = request.query as { type?: string };
-    const data = await getOrganizations(type ? { type } : undefined);
+    const { type, includeArchived } = request.query as { type?: string; includeArchived?: string };
+    const data = await getOrganizations({ type, includeArchived: includeArchived === 'true' });
     return { data };
   });
 
@@ -71,6 +73,27 @@ export async function organizationsRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
     const org = await updateOrganization(id, body as any);
+    if (!org) {
+      return reply.code(404).send({ error: 'Not found', message: 'Organization not found', statusCode: 404 });
+    }
+    return { data: org };
+  });
+
+  // PUT /api/organizations/:id/archive
+  app.put('/organizations/:id/archive', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { archived: boolean };
+    const org = await archiveOrganization(id, body.archived ?? true);
+    if (!org) {
+      return reply.code(404).send({ error: 'Not found', message: 'Organization not found', statusCode: 404 });
+    }
+    return { data: org };
+  });
+
+  // DELETE /api/organizations/:id
+  app.delete('/organizations/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const org = await deleteOrganization(id);
     if (!org) {
       return reply.code(404).send({ error: 'Not found', message: 'Organization not found', statusCode: 404 });
     }

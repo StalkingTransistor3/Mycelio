@@ -4,11 +4,14 @@ import type { OrganizationHealth } from '@mycelio/shared';
 
 const { organizations, people, interactions } = schema;
 
-export async function getOrganizations(filter?: { type?: string }) {
+export async function getOrganizations(filter?: { type?: string; includeArchived?: boolean }) {
   const query = db.select().from(organizations).orderBy(organizations.name);
-  const results = await query;
+  let results = await query;
+  if (!filter?.includeArchived) {
+    results = results.filter((o) => !o.archived);
+  }
   if (filter?.type) {
-    return results.filter((o) => o.type === filter.type);
+    results = results.filter((o) => o.type === filter.type);
   }
   return results;
 }
@@ -64,6 +67,20 @@ export async function updateOrganization(id: string, data: Partial<{
     .set({ ...data, updatedAt: new Date() })
     .where(eq(organizations.id, id))
     .returning();
+  return result[0] || null;
+}
+
+export async function archiveOrganization(id: string, archived: boolean) {
+  const result = await db
+    .update(organizations)
+    .set({ archived, updatedAt: new Date() })
+    .where(eq(organizations.id, id))
+    .returning();
+  return result[0] || null;
+}
+
+export async function deleteOrganization(id: string) {
+  const result = await db.delete(organizations).where(eq(organizations.id, id)).returning();
   return result[0] || null;
 }
 

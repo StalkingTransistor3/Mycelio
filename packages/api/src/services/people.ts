@@ -8,6 +8,9 @@ const { people } = schema;
 export async function searchPeople(params: PeopleSearchParams) {
   const conditions = [];
 
+  if (!params.includeArchived) {
+    conditions.push(eq(people.archived, false));
+  }
   if (params.query) {
     conditions.push(
       ilike(people.name, `%${params.query}%`)
@@ -132,6 +135,15 @@ export async function updatePerson(id: string, data: Partial<{
   const result = await db
     .update(people)
     .set(updateData)
+    .where(eq(people.id, id))
+    .returning();
+  return result[0] || null;
+}
+
+export async function archivePerson(id: string, archived: boolean) {
+  const result = await db
+    .update(people)
+    .set({ archived, updatedAt: new Date() })
     .where(eq(people.id, id))
     .returning();
   return result[0] || null;

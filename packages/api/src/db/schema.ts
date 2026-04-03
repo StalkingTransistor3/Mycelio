@@ -6,6 +6,7 @@ import {
   integer,
   timestamp,
   jsonb,
+  boolean,
 } from 'drizzle-orm/pg-core';
 
 // ── People ──
@@ -35,6 +36,7 @@ export const people = pgTable('people', {
   snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
   lastContactAt: timestamp('last_contact_at', { withTimezone: true }),
   nextFollowUpAt: timestamp('next_follow_up_at', { withTimezone: true }),
+  archived: boolean('archived').notNull().default(false),
   // embedding: vector('embedding', { dimensions: 1536 }), // deferred
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -51,6 +53,7 @@ export const organizations = pgTable('organizations', {
   notes: text('notes'),
   memberIds: jsonb('member_ids').$type<string[]>().notNull().default([]),
   tags: jsonb('tags').$type<string[]>().notNull().default([]),
+  archived: boolean('archived').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

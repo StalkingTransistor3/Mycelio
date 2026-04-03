@@ -47,8 +47,8 @@ export async function getGraphData(options?: {
   limit?: number;
 }): Promise<GraphData> {
   // Fetch all people and all organizations separately to handle multi-org
-  const allPeopleRaw = await db.select().from(people);
-  const allOrgs = await db.select().from(organizations);
+  const allPeopleRaw = await db.select().from(people).where(eq(people.archived, false));
+  const allOrgs = await db.select().from(organizations).where(eq(organizations.archived, false));
   const allConnections = await db.select().from(connections);
 
   const orgById = new Map(allOrgs.map(o => [o.id, o]));

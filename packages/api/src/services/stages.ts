@@ -51,7 +51,7 @@ export async function transitionStage(
 }
 
 export async function getPipeline(): Promise<Record<RelationshipStage, Array<{ id: string; name: string; tier: number; lastContactAt: string | null; daysSinceContact: number | null }>>> {
-  const allPeople = await db.select().from(people);
+  const allPeople = await db.select().from(people).where(eq(people.archived, false));
   const now = new Date();
 
   const pipeline: Record<string, Array<{ id: string; name: string; tier: number; lastContactAt: string | null; daysSinceContact: number | null }>> = {};

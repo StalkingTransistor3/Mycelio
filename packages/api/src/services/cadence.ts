@@ -211,7 +211,7 @@ export async function getDailyCadenceReport(options?: {
 
   // 1. Load all people and supporting data in parallel
   const [allPeople, upcomingMilestones, recentSentimentRows] = await Promise.all([
-    db.select().from(people).orderBy(asc(people.tier)),
+    db.select().from(people).where(eq(people.archived, false)).orderBy(asc(people.tier)),
     getUpcomingMilestones(7),
     db.execute(sql`
       SELECT person_id, sentiment FROM (
@@ -432,7 +432,7 @@ export async function getWeeklyCadenceStats(): Promise<WeeklyCadenceStats> {
   }
 
   // Get all people for tier analysis
-  const allPeople = await db.select().from(people);
+  const allPeople = await db.select().from(people).where(eq(people.archived, false));
 
   // Coverage by tier
   const tierCounts: Record<number, { total: number; touched: number }> = {

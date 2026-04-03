@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { searchPeople, getPersonById, createPerson, updatePerson, addMilestone, addTalkingPoint, getUpcomingMilestones } from '../services/people.js';
+import { searchPeople, getPersonById, createPerson, updatePerson, addMilestone, addTalkingPoint, getUpcomingMilestones, archivePerson } from '../services/people.js';
 import { getPersonSentimentTrajectory } from '../services/interactions.js';
 import { computeCoAttendance } from '../services/co-attendance.js';
 import { computeReciprocityIndex } from '../services/reciprocity.js';
@@ -17,6 +17,7 @@ export async function peopleRoutes(app: FastifyInstance) {
       tier: query.tier ? (parseInt(query.tier) as RelationshipTier) : undefined,
       tags: query.tags ? query.tags.split(',') : undefined,
       organizationId: query.organizationId,
+      includeArchived: query.includeArchived === 'true',
       limit: query.limit ? parseInt(query.limit) : undefined,
       offset: query.offset ? parseInt(query.offset) : undefined,
     };
@@ -61,6 +62,17 @@ export async function peopleRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
     const person = await updatePerson(id, body);
+    if (!person) {
+      return reply.code(404).send({ error: 'Not found', message: 'Person not found', statusCode: 404 });
+    }
+    return { data: person };
+  });
+
+  // PUT /api/people/:id/archive
+  app.put('/people/:id/archive', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { archived: boolean };
+    const person = await archivePerson(id, body.archived ?? true);
     if (!person) {
       return reply.code(404).send({ error: 'Not found', message: 'Person not found', statusCode: 404 });
     }

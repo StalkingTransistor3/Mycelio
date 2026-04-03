@@ -1,4 +1,4 @@
-import { asc, desc, sql } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getUpcomingMilestones } from './people.js';
 import type { FollowUp } from '@mycelio/shared';
@@ -10,7 +10,7 @@ export async function getFollowUps(options?: { includeSnoozed?: boolean; limit?:
 
   // Run people query and milestones query in parallel
   const [allPeople, upcoming] = await Promise.all([
-    db.select().from(people).orderBy(asc(people.nextFollowUpAt)),
+    db.select().from(people).where(eq(people.archived, false)).orderBy(asc(people.nextFollowUpAt)),
     getUpcomingMilestones(7),
   ]);
 

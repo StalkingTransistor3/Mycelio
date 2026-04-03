@@ -9,7 +9,7 @@ const { connections, people, events } = schema;
  * Uses degree centrality, betweenness centrality, and cluster coefficient.
  */
 export async function computeInfluenceScores(): Promise<PersonInfluence[]> {
-  const allPeople = await db.select({ id: people.id, name: people.name }).from(people);
+  const allPeople = await db.select({ id: people.id, name: people.name }).from(people).where(eq(people.archived, false));
   const allConnections = await db.select().from(connections);
 
   // Build adjacency list
@@ -133,7 +133,7 @@ export async function computeInfluenceScores(): Promise<PersonInfluence[]> {
  */
 export async function detectMicroCommunities(): Promise<MicroCommunity[]> {
   const allConnections = await db.select().from(connections);
-  const allPeople = await db.select({ id: people.id, name: people.name, tags: people.tags }).from(people);
+  const allPeople = await db.select({ id: people.id, name: people.name, tags: people.tags }).from(people).where(eq(people.archived, false));
 
   // Build adjacency
   const adj = new Map<string, Set<string>>();
@@ -217,7 +217,7 @@ export async function findWarmPath(
   maxDepth = 4
 ): Promise<Array<{ path: Array<{ personId: string; personName: string; tier: number }>; warmthScore: number }>> {
   const allConnections = await db.select().from(connections);
-  const allPeople = await db.select({ id: people.id, name: people.name, tier: people.tier }).from(people);
+  const allPeople = await db.select({ id: people.id, name: people.name, tier: people.tier }).from(people).where(eq(people.archived, false));
 
   const personMap = new Map(allPeople.map(p => [p.id, p]));
 
@@ -287,7 +287,7 @@ export async function getSocialContext(personId: string) {
     tier: people.tier,
     organizationId: people.organizationId,
     tags: people.tags,
-  }).from(people);
+  }).from(people).where(eq(people.archived, false));
 
   const personMap = new Map(allPeople.map(p => [p.id, p]));
   const person = personMap.get(personId);
