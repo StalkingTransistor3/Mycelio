@@ -337,8 +337,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         enableNodeDrag={true}
         cooldownTicks={Infinity}
         cooldownTime={Infinity}
-        d3AlphaMin={0}
-        d3AlphaDecay={0.02}
+        d3AlphaDecay={0}
         d3VelocityDecay={0.3}
         warmupTicks={50}
       />
