@@ -60,9 +60,10 @@ interface Props {
   width: number;
   height: number;
   typeColorMap: Record<string, string>;
+  onNodeSelect?: (nodeId: string) => void;
 }
 
-export default function RelationshipGraph({ nodes, links, width, height, typeColorMap }: Props) {
+export default function RelationshipGraph({ nodes, links, width, height, typeColorMap, onNodeSelect }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(undefined);
   const [highlightNodes, setHighlightNodes] = useState<Set<string>>(new Set());
@@ -113,6 +114,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
 
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
+      if (onNodeSelect) onNodeSelect(node.id);
       // On click, toggle highlight (if already highlighted, clear; else highlight)
       if (hoveredNode === node.id) {
         setHighlightNodes(new Set());

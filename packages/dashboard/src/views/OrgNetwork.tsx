@@ -1,7 +1,9 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useOrgRelationships, useCreateOrgRelationship, useDeleteOrgRelationship } from '../hooks/useRelationships.js';
 import { useOrganizations } from '../hooks/useOrganizations.js';
+import { api } from '../api/client.js';
 import type { Organization, OrgRelationshipEnriched } from '@mycelio/shared';
 import Modal from '../components/Modal.js';
 import { Button } from '../components/FormField.js';
@@ -104,6 +106,16 @@ export default function OrgNetwork() {
   // Build graph data from filtered relationships
   const graphData = useMemo(() => buildOrgGraphData(filtered), [filtered]);
 
+  // Sidebar state
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const { data: selectedOrg } = useQuery({
+    queryKey: ['org', selectedNodeId],
+    queryFn: () => api.getOrganization(selectedNodeId!),
+    enabled: !!selectedNodeId,
+    select: (res) => res.data as Organization,
+  });
+  const handleNodeSelect = useCallback((nodeId: string) => setSelectedNodeId(nodeId), []);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -176,14 +188,43 @@ export default function OrgNetwork() {
 
       {/* Graph view */}
       {viewMode === 'graph' && !isLoading && (
-        <div ref={graphContainerRef} className="glass rounded-xl neon-border overflow-hidden">
+        <div ref={graphContainerRef} className="glass rounded-xl neon-border overflow-hidden relative">
           <RelationshipGraph
             nodes={graphData.nodes}
             links={graphData.links}
             width={graphSize.width}
             height={graphSize.height}
             typeColorMap={graphData.typeColorMap}
+            onNodeSelect={handleNodeSelect}
           />
+          {/* Sidebar */}
+          {selectedNodeId && selectedOrg && (
+            <div className="absolute top-0 right-0 h-full w-72 glass border-l border-white/10 overflow-y-auto z-20">
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-bold text-white/90 font-mono truncate">{selectedOrg.name}</h3>
+                  <button onClick={() => setSelectedNodeId(null)} className="text-white/30 hover:text-white/60 text-xs">x</button>
+                </div>
+                <div className="text-xs text-white/40 mb-1">{selectedOrg.type}</div>
+                {selectedOrg.industry && <div className="text-xs text-white/30 mb-1">{selectedOrg.industry}</div>}
+                {selectedOrg.domain && <div className="text-xs text-white/20 mb-2">{selectedOrg.domain}</div>}
+                {selectedOrg.description && <div className="text-xs text-white/30 mb-3 line-clamp-3">{selectedOrg.description}</div>}
+                {(selectedOrg.tags as string[])?.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-3">
+                    {(selectedOrg.tags as string[]).slice(0, 6).map((tag: string) => (
+                      <span key={tag} className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/40">{tag}</span>
+                    ))}
+                  </div>
+                )}
+                <Link
+                  to={`/organisations/${selectedOrg.id}`}
+                  className="block w-full px-3 py-1.5 text-center text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-[#00f0ff]/80 hover:text-[#00f0ff] hover:border-[#00f0ff]/40 transition-all"
+                >
+                  View Organization →
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
