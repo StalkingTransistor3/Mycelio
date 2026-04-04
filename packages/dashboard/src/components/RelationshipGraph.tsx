@@ -311,86 +311,78 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     scheduleOrbitResume();
   }, [scheduleOrbitResume]);
 
-  // --- Orbital rotation via node position manipulation ---
-  // Rotates all node positions around the center of mass each frame.
-  // We mutate node x/y in place — ForceGraph2D's internal render loop
-  // picks up the changes without needing to call graphData() (which
-  // would reheat the d3 simulation and fight the rotation).
+  // --- Orbital rotation via custom d3 force ---
+  // Injects a custom "orbit" force into the d3 simulation that applies
+  // rotational velocity to all nodes around their center of mass.
+  // This works WITH the simulation rather than fighting it.
+  const orbitSettledRef = useRef(false);
+
   useEffect(() => {
-    // Wait for simulation to settle before starting orbit
+    if (!fgRef.current) return;
+
+    // After initial layout settles, inject the orbit force and keep sim alive
     const startDelay = setTimeout(() => {
-      orbitPausedRef.current = false;
-    }, 3000);
-    orbitPausedRef.current = true; // pause during initial layout
+      if (!fgRef.current) return;
+      orbitSettledRef.current = true;
 
-    const orbitTick = (timestamp: number) => {
-      orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
+      // Remove the default forces that would fight rotation after layout
+      fgRef.current.d3Force('charge', null);
+      fgRef.current.d3Force('center', null);
+      fgRef.current.d3Force('link', null);
 
-      if (orbitPausedRef.current || !fgRef.current) return;
+      // Add custom orbit force
+      fgRef.current.d3Force('orbit', () => {
+        if (orbitPausedRef.current || !fgRef.current) return;
 
-      if (orbitLastTimeRef.current === 0) {
-        orbitLastTimeRef.current = timestamp;
-        return;
-      }
+        const gd = fgRef.current.graphData();
+        if (!gd || !gd.nodes || gd.nodes.length === 0) return;
+        const graphNodes = gd.nodes as GraphNode[];
 
-      const dt = timestamp - orbitLastTimeRef.current;
-      orbitLastTimeRef.current = timestamp;
-
-      // Cap dt to avoid huge jumps if tab was backgrounded
-      const clampedDt = Math.min(dt, 100);
-
-      // Angular velocity: one full rotation (2*PI radians) in ORBIT_PERIOD_MS
-      const angularVelocity = (2 * Math.PI) / ORBIT_PERIOD_MS;
-      const dAngle = angularVelocity * clampedDt;
-      orbitAngleRef.current += dAngle;
-      if (orbitAngleRef.current > 2 * Math.PI) {
-        orbitAngleRef.current -= 2 * Math.PI;
-      }
-
-      // Get current nodes and rotate positions around center of mass
-      const gd = fgRef.current.graphData();
-      if (!gd || !gd.nodes || gd.nodes.length === 0) return;
-
-      const graphNodes = gd.nodes as GraphNode[];
-
-      // Compute center of mass
-      let cx = 0, cy = 0, count = 0;
-      for (const n of graphNodes) {
-        if (n.x != null && n.y != null) {
-          cx += n.x;
-          cy += n.y;
-          count++;
+        // Compute center of mass
+        let cx = 0, cy = 0, count = 0;
+        for (const n of graphNodes) {
+          if (n.x != null && n.y != null) {
+            cx += n.x;
+            cy += n.y;
+            count++;
+          }
         }
-      }
-      if (count === 0) return;
-      cx /= count;
-      cy /= count;
+        if (count === 0) return;
+        cx /= count;
+        cy /= count;
 
-      // Rotate each node around center of mass (mutate in place)
-      const cosA = Math.cos(dAngle);
-      const sinA = Math.sin(dAngle);
-      for (const n of graphNodes) {
-        if (n.x != null && n.y != null) {
-          const dx = n.x - cx;
-          const dy = n.y - cy;
-          n.x = cx + dx * cosA - dy * sinA;
-          n.y = cy + dx * sinA + dy * cosA;
+        // Small angle per simulation tick (~60fps → one rotation per ORBIT_PERIOD_MS)
+        const dAngle = (2 * Math.PI) / (ORBIT_PERIOD_MS / 16.67);
+        const cosA = Math.cos(dAngle);
+        const sinA = Math.sin(dAngle);
+
+        for (const n of graphNodes) {
+          if (n.x != null && n.y != null) {
+            const dx = n.x - cx;
+            const dy = n.y - cy;
+            n.x = cx + dx * cosA - dy * sinA;
+            n.y = cy + dx * sinA + dy * cosA;
+          }
         }
-      }
+      });
 
-      // DO NOT call fgRef.current.graphData(gd) — that reheats the
-      // d3 simulation which fights the rotation. The ForceGraph2D
-      // internal render loop reads node.x/y every frame automatically.
-    };
-
-    orbitLastTimeRef.current = 0;
-    orbitAngleRef.current = 0;
-    orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
+      // Keep simulation alive forever with minimal alpha
+      // This ensures the orbit force keeps ticking and canvas keeps rendering
+      const keepAlive = () => {
+        if (fgRef.current && orbitSettledRef.current) {
+          fgRef.current.d3ReheatSimulation();
+        }
+      };
+      keepAlive();
+      // Re-heat periodically since alpha will decay
+      const interval = setInterval(keepAlive, 1000);
+      orbitAnimFrameRef.current = interval as unknown as number;
+    }, 4000); // Wait 4s for layout to fully settle
 
     return () => {
       clearTimeout(startDelay);
       if (orbitAnimFrameRef.current != null) {
-        cancelAnimationFrame(orbitAnimFrameRef.current);
+        clearInterval(orbitAnimFrameRef.current as unknown as ReturnType<typeof setInterval>);
         orbitAnimFrameRef.current = null;
       }
       if (orbitResumeTimerRef.current != null) {
@@ -447,7 +439,8 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         onNodeDrag={handleNodeDrag}
         onNodeDragEnd={handleNodeDragEnd}
         enableNodeDrag={true}
-        cooldownTicks={100}
+        cooldownTicks={200}
+        cooldownTime={8000}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
         warmupTicks={50}
