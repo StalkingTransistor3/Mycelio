@@ -325,38 +325,28 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       if (!fgRef.current) return;
       orbitSettledRef.current = true;
 
-      // Get settled node positions and pin them with fx/fy
-      const gd = fgRef.current.graphData();
-      if (!gd || !gd.nodes) return;
-      const graphNodes = gd.nodes as GraphNode[];
-      for (const n of graphNodes) {
-        if (n.x != null && n.y != null) {
-          n.fx = n.x;
-          n.fy = n.y;
-          n.vx = 0;
-          n.vy = 0;
-        }
-      }
-
-      // Remove all default forces — layout is done, nodes are pinned
+      // Remove layout forces — layout is done
       fgRef.current.d3Force('charge', null);
       fgRef.current.d3Force('center', null);
       fgRef.current.d3Force('link', null);
 
-      // Add custom orbit force that rotates pinned positions (fx/fy)
+      // Angular velocity: 2*PI / period, compensate for velocityDecay (0.3)
+      const omega = (2 * Math.PI) / (ORBIT_PERIOD_MS / 16.67) / 0.7;
+
+      // Add orbit force: give each node tangential velocity relative to center of mass
       fgRef.current.d3Force('orbit', () => {
         if (orbitPausedRef.current || !fgRef.current) return;
 
-        const currentGd = fgRef.current.graphData();
-        if (!currentGd || !currentGd.nodes || currentGd.nodes.length === 0) return;
-        const currentNodes = currentGd.nodes as GraphNode[];
+        const gd = fgRef.current.graphData();
+        if (!gd || !gd.nodes || gd.nodes.length === 0) return;
+        const graphNodes = gd.nodes as GraphNode[];
 
-        // Compute center of mass from fixed positions
+        // Compute center of mass
         let cx = 0, cy = 0, count = 0;
-        for (const n of currentNodes) {
-          if (n.fx != null && n.fy != null) {
-            cx += n.fx;
-            cy += n.fy;
+        for (const n of graphNodes) {
+          if (n.x != null && n.y != null) {
+            cx += n.x;
+            cy += n.y;
             count++;
           }
         }
@@ -364,23 +354,18 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         cx /= count;
         cy /= count;
 
-        // Small angle per simulation tick (~60fps → one rotation per ORBIT_PERIOD_MS)
-        const dAngle = (2 * Math.PI) / (ORBIT_PERIOD_MS / 16.67);
-        const cosA = Math.cos(dAngle);
-        const sinA = Math.sin(dAngle);
-
-        // Rotate the pinned positions — simulation can't override fx/fy
-        for (const n of currentNodes) {
-          if (n.fx != null && n.fy != null) {
-            const dx = n.fx - cx;
-            const dy = n.fy - cy;
-            n.fx = cx + dx * cosA - dy * sinA;
-            n.fy = cy + dx * sinA + dy * cosA;
+        // Set tangential velocity: perpendicular to radius from center
+        for (const n of graphNodes) {
+          if (n.x != null && n.y != null) {
+            const dy = n.y! - cy;
+            const dx = n.x! - cx;
+            n.vx = -omega * dy;
+            n.vy = omega * dx;
           }
         }
       });
 
-      // Keep simulation alive so the orbit force keeps ticking and canvas renders
+      // Keep simulation alive so orbit force keeps ticking
       const keepAlive = () => {
         if (fgRef.current && orbitSettledRef.current) {
           fgRef.current.d3ReheatSimulation();
