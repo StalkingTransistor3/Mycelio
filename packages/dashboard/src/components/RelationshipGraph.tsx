@@ -313,7 +313,16 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
 
   // --- Orbital rotation via node position manipulation ---
   // Rotates all node positions around the center of mass each frame.
+  // We mutate node x/y in place — ForceGraph2D's internal render loop
+  // picks up the changes without needing to call graphData() (which
+  // would reheat the d3 simulation and fight the rotation).
   useEffect(() => {
+    // Wait for simulation to settle before starting orbit
+    const startDelay = setTimeout(() => {
+      orbitPausedRef.current = false;
+    }, 3000);
+    orbitPausedRef.current = true; // pause during initial layout
+
     const orbitTick = (timestamp: number) => {
       orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
 
@@ -327,15 +336,18 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       const dt = timestamp - orbitLastTimeRef.current;
       orbitLastTimeRef.current = timestamp;
 
+      // Cap dt to avoid huge jumps if tab was backgrounded
+      const clampedDt = Math.min(dt, 100);
+
       // Angular velocity: one full rotation (2*PI radians) in ORBIT_PERIOD_MS
       const angularVelocity = (2 * Math.PI) / ORBIT_PERIOD_MS;
-      const dAngle = angularVelocity * dt;
+      const dAngle = angularVelocity * clampedDt;
       orbitAngleRef.current += dAngle;
       if (orbitAngleRef.current > 2 * Math.PI) {
         orbitAngleRef.current -= 2 * Math.PI;
       }
 
-      // Get current graph data and rotate node positions around center of mass
+      // Get current nodes and rotate positions around center of mass
       const gd = fgRef.current.graphData();
       if (!gd || !gd.nodes || gd.nodes.length === 0) return;
 
@@ -354,7 +366,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       cx /= count;
       cy /= count;
 
-      // Rotate each node around center of mass
+      // Rotate each node around center of mass (mutate in place)
       const cosA = Math.cos(dAngle);
       const sinA = Math.sin(dAngle);
       for (const n of graphNodes) {
@@ -366,16 +378,17 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         }
       }
 
-      // Trigger re-render without reheating the simulation
-      fgRef.current.graphData(gd);
+      // DO NOT call fgRef.current.graphData(gd) — that reheats the
+      // d3 simulation which fights the rotation. The ForceGraph2D
+      // internal render loop reads node.x/y every frame automatically.
     };
 
     orbitLastTimeRef.current = 0;
-    orbitPausedRef.current = false;
     orbitAngleRef.current = 0;
     orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
 
     return () => {
+      clearTimeout(startDelay);
       if (orbitAnimFrameRef.current != null) {
         cancelAnimationFrame(orbitAnimFrameRef.current);
         orbitAnimFrameRef.current = null;
