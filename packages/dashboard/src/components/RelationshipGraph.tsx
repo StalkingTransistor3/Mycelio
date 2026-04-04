@@ -325,25 +325,38 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       if (!fgRef.current) return;
       orbitSettledRef.current = true;
 
-      // Remove the default forces that would fight rotation after layout
+      // Get settled node positions and pin them with fx/fy
+      const gd = fgRef.current.graphData();
+      if (!gd || !gd.nodes) return;
+      const graphNodes = gd.nodes as GraphNode[];
+      for (const n of graphNodes) {
+        if (n.x != null && n.y != null) {
+          n.fx = n.x;
+          n.fy = n.y;
+          n.vx = 0;
+          n.vy = 0;
+        }
+      }
+
+      // Remove all default forces — layout is done, nodes are pinned
       fgRef.current.d3Force('charge', null);
       fgRef.current.d3Force('center', null);
       fgRef.current.d3Force('link', null);
 
-      // Add custom orbit force
+      // Add custom orbit force that rotates pinned positions (fx/fy)
       fgRef.current.d3Force('orbit', () => {
         if (orbitPausedRef.current || !fgRef.current) return;
 
-        const gd = fgRef.current.graphData();
-        if (!gd || !gd.nodes || gd.nodes.length === 0) return;
-        const graphNodes = gd.nodes as GraphNode[];
+        const currentGd = fgRef.current.graphData();
+        if (!currentGd || !currentGd.nodes || currentGd.nodes.length === 0) return;
+        const currentNodes = currentGd.nodes as GraphNode[];
 
-        // Compute center of mass
+        // Compute center of mass from fixed positions
         let cx = 0, cy = 0, count = 0;
-        for (const n of graphNodes) {
-          if (n.x != null && n.y != null) {
-            cx += n.x;
-            cy += n.y;
+        for (const n of currentNodes) {
+          if (n.fx != null && n.fy != null) {
+            cx += n.fx;
+            cy += n.fy;
             count++;
           }
         }
@@ -356,26 +369,25 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         const cosA = Math.cos(dAngle);
         const sinA = Math.sin(dAngle);
 
-        for (const n of graphNodes) {
-          if (n.x != null && n.y != null) {
-            const dx = n.x - cx;
-            const dy = n.y - cy;
-            n.x = cx + dx * cosA - dy * sinA;
-            n.y = cy + dx * sinA + dy * cosA;
+        // Rotate the pinned positions — simulation can't override fx/fy
+        for (const n of currentNodes) {
+          if (n.fx != null && n.fy != null) {
+            const dx = n.fx - cx;
+            const dy = n.fy - cy;
+            n.fx = cx + dx * cosA - dy * sinA;
+            n.fy = cy + dx * sinA + dy * cosA;
           }
         }
       });
 
-      // Keep simulation alive forever with minimal alpha
-      // This ensures the orbit force keeps ticking and canvas keeps rendering
+      // Keep simulation alive so the orbit force keeps ticking and canvas renders
       const keepAlive = () => {
         if (fgRef.current && orbitSettledRef.current) {
           fgRef.current.d3ReheatSimulation();
         }
       };
       keepAlive();
-      // Re-heat periodically since alpha will decay
-      const interval = setInterval(keepAlive, 1000);
+      const interval = setInterval(keepAlive, 2000);
       orbitAnimFrameRef.current = interval as unknown as number;
     }, 4000); // Wait 4s for layout to fully settle
 
