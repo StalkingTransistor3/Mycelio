@@ -40,23 +40,30 @@ export default function OrgNetwork() {
 
   // Graph container sizing
   const graphContainerRef = useRef<HTMLDivElement>(null);
-  const [graphSize, setGraphSize] = useState({ width: 800, height: 600 });
+  const [graphSize, setGraphSize] = useState({ width: window.innerWidth - 300, height: 600 });
 
   useEffect(() => {
-    if (viewMode !== 'graph') return;
+    if (viewMode !== 'graph' || isLoading) return;
+    const el = graphContainerRef.current;
+    if (!el) return;
+
     const measure = () => {
-      if (graphContainerRef.current) {
-        const rect = graphContainerRef.current.getBoundingClientRect();
-        setGraphSize({
-          width: Math.max(rect.width, 400),
-          height: Math.max(window.innerHeight - rect.top - 24, 400),
-        });
-      }
+      const rect = el.getBoundingClientRect();
+      setGraphSize({
+        width: Math.max(rect.width, 400),
+        height: Math.max(window.innerHeight - rect.top - 24, 400),
+      });
     };
+
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(el);
     measure();
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [viewMode]);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [viewMode, isLoading]);
 
   // Form state
   const [orgAId, setOrgAId] = useState('');
