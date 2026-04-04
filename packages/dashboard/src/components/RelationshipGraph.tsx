@@ -30,14 +30,12 @@ const PERSON_TYPE_COLORS: Record<string, string> = {
 
 // ── Types ──
 
-// Extends NodeObject so react-force-graph-2d's runtime x/y/vx/vy are typed
 export interface GraphNode {
   id: string;
   name: string;
-  val: number; // node size
+  val: number;
   color: string;
   subtitle?: string;
-  // Added by react-force-graph-2d at runtime
   x?: number;
   y?: number;
   vx?: number;
@@ -63,9 +61,8 @@ interface Props {
   onNodeSelect?: (nodeId: string) => void;
 }
 
-// --- Orbital rotation constants ---
-const ORBIT_PERIOD_MS = 75000; // Full rotation in 75 seconds
-const ORBIT_RESUME_DELAY_MS = 2500; // Resume orbit after 2.5s of no interaction
+// --- Orbit config ---
+const ORBIT_PERIOD_MS = 75000;
 
 export default function RelationshipGraph({ nodes, links, width, height, typeColorMap, onNodeSelect }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -73,42 +70,31 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
   const [highlightNodes, setHighlightNodes] = useState<Set<string>>(new Set());
   const [highlightLinks, setHighlightLinks] = useState<Set<string>>(new Set());
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
-
-  // --- Orbital rotation state ---
-  const orbitAnimFrameRef = useRef<number | null>(null);
-  const orbitLastTimeRef = useRef<number>(0);
   const orbitPausedRef = useRef(false);
   const orbitResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const orbitInteractingRef = useRef(false);
-  const orbitAngleRef = useRef(0);
 
-  // Pause orbit on user interaction
   const pauseOrbit = useCallback(() => {
     orbitPausedRef.current = true;
-    orbitInteractingRef.current = true;
     if (orbitResumeTimerRef.current != null) {
       clearTimeout(orbitResumeTimerRef.current);
       orbitResumeTimerRef.current = null;
     }
   }, []);
 
-  // Schedule orbit resume after delay
   const scheduleOrbitResume = useCallback(() => {
-    orbitInteractingRef.current = false;
     if (orbitResumeTimerRef.current != null) {
       clearTimeout(orbitResumeTimerRef.current);
     }
     orbitResumeTimerRef.current = setTimeout(() => {
       orbitPausedRef.current = false;
-      orbitLastTimeRef.current = 0; // reset to avoid jump
       orbitResumeTimerRef.current = null;
-    }, ORBIT_RESUME_DELAY_MS);
+    }, 2500);
   }, []);
 
   // Build adjacency map for highlight propagation
   const adjacency = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    const linkSet = new Map<string, Set<string>>(); // nodeId -> set of link keys
+    const linkSet = new Map<string, Set<string>>();
     for (const link of links) {
       const src = typeof link.source === 'object' ? (link.source as GraphNode).id : link.source;
       const tgt = typeof link.target === 'object' ? (link.target as GraphNode).id : link.target;
@@ -140,10 +126,8 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       pauseOrbit();
       const nodeId = node.id;
       const neighbors = adjacency.neighbors.get(nodeId) || new Set();
-      const newHighlightNodes = new Set<string>([nodeId, ...neighbors]);
-      const newHighlightLinks = adjacency.linkKeys.get(nodeId) || new Set();
-      setHighlightNodes(newHighlightNodes);
-      setHighlightLinks(newHighlightLinks);
+      setHighlightNodes(new Set<string>([nodeId, ...neighbors]));
+      setHighlightLinks(adjacency.linkKeys.get(nodeId) || new Set());
       setHoveredNode(nodeId);
     },
     [adjacency, pauseOrbit, scheduleOrbitResume],
@@ -153,11 +137,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     (node: GraphNode) => {
       pauseOrbit();
       scheduleOrbitResume();
-      // Select node (open sidebar) if handler provided
-      if (onNodeSelect) {
-        onNodeSelect(node.id);
-      }
-      // On click, toggle highlight (if already highlighted, clear; else highlight)
+      if (onNodeSelect) onNodeSelect(node.id);
       if (hoveredNode === node.id) {
         setHighlightNodes(new Set());
         setHighlightLinks(new Set());
@@ -165,7 +145,6 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       } else {
         handleNodeHover(node);
       }
-      // Center on node
       if (fgRef.current) {
         fgRef.current.centerAt(node.x, node.y, 400);
         fgRef.current.zoom(2, 400);
@@ -188,17 +167,13 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       const isHovered = hoveredNode === nodeId;
       const hasHighlight = highlightNodes.size > 0;
       const radius = Math.sqrt(node.val || 1) * 3;
-
-      // Dimming logic
       const alpha = hasHighlight ? (isHighlighted ? 1.0 : 0.15) : 0.85;
 
-      // Glow effect for hovered node
       if (isHovered) {
         ctx.beginPath();
         ctx.arc(node.x!, node.y!, radius + 4, 0, 2 * Math.PI);
         ctx.fillStyle = `${node.color}30`;
         ctx.fill();
-
         ctx.beginPath();
         ctx.arc(node.x!, node.y!, radius + 2, 0, 2 * Math.PI);
         ctx.strokeStyle = node.color;
@@ -206,26 +181,21 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         ctx.stroke();
       }
 
-      // Main circle
       ctx.beginPath();
       ctx.arc(node.x!, node.y!, radius, 0, 2 * Math.PI);
       ctx.fillStyle = alpha < 1 ? hexWithAlpha(node.color, alpha) : node.color;
       ctx.fill();
 
-      // Label
       const fontSize = Math.max(10 / globalScale, 2);
       if (globalScale > 0.6 || isHighlighted) {
         ctx.font = `${isHovered ? 'bold ' : ''}${fontSize}px 'JetBrains Mono', 'Fira Code', monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         ctx.fillStyle = hasHighlight
-          ? isHighlighted
-            ? 'rgba(255,255,255,0.9)'
-            : 'rgba(255,255,255,0.1)'
+          ? isHighlighted ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.1)'
           : 'rgba(255,255,255,0.7)';
         ctx.fillText(node.name, node.x!, node.y! + radius + 2);
 
-        // Subtitle
         if (node.subtitle && (isHovered || (globalScale > 1.5 && isHighlighted))) {
           ctx.font = `${fontSize * 0.8}px 'JetBrains Mono', 'Fira Code', monospace`;
           ctx.fillStyle = 'rgba(255,255,255,0.4)';
@@ -243,13 +213,10 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       const tgt = typeof link.target === 'object' ? (link.target as GraphNode) : null;
       if (!src || !tgt || src.x == null || tgt.x == null) return;
 
-      const srcId = src.id;
-      const tgtId = tgt.id;
-      const linkKey = `${srcId}->${tgtId}`;
-      const linkKeyR = `${tgtId}->${srcId}`;
+      const linkKey = `${src.id}->${tgt.id}`;
+      const linkKeyR = `${tgt.id}->${src.id}`;
       const isHighlighted = highlightLinks.has(linkKey) || highlightLinks.has(linkKeyR);
       const hasHighlight = highlightNodes.size > 0;
-
       const alpha = hasHighlight ? (isHighlighted ? 0.7 : 0.04) : 0.2;
       const lineWidth = isHighlighted ? 1.5 / globalScale : 0.5 / globalScale;
 
@@ -260,7 +227,6 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       ctx.lineWidth = lineWidth;
       ctx.stroke();
 
-      // Edge label when highlighted and zoomed in enough
       if (isHighlighted && globalScale > 1.2) {
         const mx = (src.x! + tgt.x!) / 2;
         const my = (src.y! + tgt.y!) / 2;
@@ -268,15 +234,12 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         ctx.font = `${fontSize}px 'JetBrains Mono', 'Fira Code', monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-
-        // Background pill
         const text = link.type;
         const textW = ctx.measureText(text).width;
         ctx.fillStyle = 'rgba(10, 10, 15, 0.85)';
         const padX = 3 / globalScale;
         const padY = 2 / globalScale;
         ctx.fillRect(mx - textW / 2 - padX, my - fontSize / 2 - padY, textW + padX * 2, fontSize + padY * 2);
-
         ctx.fillStyle = hexWithAlpha(link.color, 0.8);
         ctx.fillText(text, mx, my);
       }
@@ -284,7 +247,6 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     [highlightLinks, highlightNodes],
   );
 
-  // Node pointer area for hit detection
   const nodePointerAreaPaint = useCallback(
     (node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => {
       const radius = Math.sqrt(node.val || 1) * 3 + 4;
@@ -296,105 +258,54 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     [],
   );
 
-  // Pause orbit on zoom interaction
-  const handleZoom = useCallback(() => {
-    pauseOrbit();
-    scheduleOrbitResume();
-  }, [pauseOrbit, scheduleOrbitResume]);
-
-  // Pause orbit on node drag
-  const handleNodeDrag = useCallback(() => {
-    pauseOrbit();
-  }, [pauseOrbit]);
-
-  const handleNodeDragEnd = useCallback(() => {
-    scheduleOrbitResume();
-  }, [scheduleOrbitResume]);
-
-  // --- Orbital rotation via custom d3 force ---
-  // Injects a custom "orbit" force into the d3 simulation that applies
-  // rotational velocity to all nodes around their center of mass.
-  // This works WITH the simulation rather than fighting it.
-  const orbitSettledRef = useRef(false);
-
+  // --- Orbit: inject tangential velocity force after layout settles ---
   useEffect(() => {
-    if (!fgRef.current) return;
-
-    // After initial layout settles, inject the orbit force and keep sim alive
     const startDelay = setTimeout(() => {
       if (!fgRef.current) return;
-      orbitSettledRef.current = true;
 
-      // Remove layout forces — layout is done
+      // Layout is done — remove positioning forces, keep only orbit
       fgRef.current.d3Force('charge', null);
       fgRef.current.d3Force('center', null);
       fgRef.current.d3Force('link', null);
 
-      // Angular velocity: 2*PI / period, compensate for velocityDecay (0.3)
+      // Tangential velocity: perpendicular to radius from center of mass
+      // omega = angular velocity per tick, compensated for velocityDecay
       const omega = (2 * Math.PI) / (ORBIT_PERIOD_MS / 16.67) / 0.7;
 
-      // Add orbit force: give each node tangential velocity relative to center of mass
       fgRef.current.d3Force('orbit', () => {
-        if (orbitPausedRef.current || !fgRef.current) return;
+        if (orbitPausedRef.current) return;
 
         const gd = fgRef.current.graphData();
-        if (!gd || !gd.nodes || gd.nodes.length === 0) return;
-        const graphNodes = gd.nodes as GraphNode[];
+        if (!gd?.nodes?.length) return;
+        const ns = gd.nodes as GraphNode[];
 
-        // Compute center of mass
         let cx = 0, cy = 0, count = 0;
-        for (const n of graphNodes) {
-          if (n.x != null && n.y != null) {
-            cx += n.x;
-            cy += n.y;
-            count++;
-          }
+        for (const n of ns) {
+          if (n.x != null && n.y != null) { cx += n.x; cy += n.y; count++; }
         }
         if (count === 0) return;
-        cx /= count;
-        cy /= count;
+        cx /= count; cy /= count;
 
-        // Set tangential velocity: perpendicular to radius from center
-        for (const n of graphNodes) {
+        for (const n of ns) {
           if (n.x != null && n.y != null) {
-            const dy = n.y! - cy;
-            const dx = n.x! - cx;
-            n.vx = -omega * dy;
-            n.vy = omega * dx;
+            n.vx = -omega * (n.y! - cy);
+            n.vy = omega * (n.x! - cx);
           }
         }
       });
-
-      // Keep simulation alive so orbit force keeps ticking
-      const keepAlive = () => {
-        if (fgRef.current && orbitSettledRef.current) {
-          fgRef.current.d3ReheatSimulation();
-        }
-      };
-      keepAlive();
-      const interval = setInterval(keepAlive, 2000);
-      orbitAnimFrameRef.current = interval as unknown as number;
-    }, 4000); // Wait 4s for layout to fully settle
+    }, 5000);
 
     return () => {
       clearTimeout(startDelay);
-      if (orbitAnimFrameRef.current != null) {
-        clearInterval(orbitAnimFrameRef.current as unknown as ReturnType<typeof setInterval>);
-        orbitAnimFrameRef.current = null;
-      }
       if (orbitResumeTimerRef.current != null) {
         clearTimeout(orbitResumeTimerRef.current);
-        orbitResumeTimerRef.current = null;
       }
     };
   }, []);
 
   if (nodes.length === 0) {
     return (
-      <div
-        className="flex items-center justify-center"
-        style={{ width, height, backgroundColor: '#0a0a0f' }}
-      >
+      <div className="flex items-center justify-center" style={{ width, height, backgroundColor: '#0a0a0f' }}>
         <p className="text-white/20">No relationships to display</p>
       </div>
     );
@@ -408,10 +319,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           {Object.entries(typeColorMap).map(([type, color]) => (
             <div key={type} className="flex items-center gap-1">
-              <span
-                className="w-2 h-2 rounded-full inline-block"
-                style={{ backgroundColor: color }}
-              />
+              <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: color }} />
               <span className="text-white/50 text-[10px] font-mono">{type}</span>
             </div>
           ))}
@@ -432,12 +340,13 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         onNodeHover={handleNodeHover}
         onNodeClick={handleNodeClick}
         onBackgroundClick={handleBackgroundClick}
-        onZoom={handleZoom}
-        onNodeDrag={handleNodeDrag}
-        onNodeDragEnd={handleNodeDragEnd}
+        onZoom={() => { pauseOrbit(); scheduleOrbitResume(); }}
+        onNodeDrag={() => pauseOrbit()}
+        onNodeDragEnd={() => scheduleOrbitResume()}
         enableNodeDrag={true}
-        cooldownTicks={200}
-        cooldownTime={8000}
+        cooldownTicks={300}
+        cooldownTime={Infinity}
+        d3AlphaMin={0}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
         warmupTicks={50}
@@ -449,7 +358,6 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
 // ── Helpers ──
 
 function hexWithAlpha(hex: string, alpha: number): string {
-  // Handle already-rgba
   if (hex.startsWith('rgba')) return hex;
   if (hex.startsWith('rgb(')) {
     return hex.replace('rgb(', 'rgba(').replace(')', `, ${alpha})`);
@@ -472,34 +380,19 @@ export function buildOrgGraphData(
   }>,
 ) {
   const nodeMap = new Map<string, { id: string; name: string; type: string; connections: number }>();
-
   for (const rel of relationships) {
-    if (!nodeMap.has(rel.orgA.id)) {
-      nodeMap.set(rel.orgA.id, { ...rel.orgA, connections: 0 });
-    }
-    if (!nodeMap.has(rel.orgB.id)) {
-      nodeMap.set(rel.orgB.id, { ...rel.orgB, connections: 0 });
-    }
+    if (!nodeMap.has(rel.orgA.id)) nodeMap.set(rel.orgA.id, { ...rel.orgA, connections: 0 });
+    if (!nodeMap.has(rel.orgB.id)) nodeMap.set(rel.orgB.id, { ...rel.orgB, connections: 0 });
     nodeMap.get(rel.orgA.id)!.connections++;
     nodeMap.get(rel.orgB.id)!.connections++;
   }
-
   const nodes: GraphNode[] = Array.from(nodeMap.values()).map((n) => ({
-    id: n.id,
-    name: n.name,
-    val: Math.max(1, n.connections),
-    color: '#00f0ff',
-    subtitle: n.type,
+    id: n.id, name: n.name, val: Math.max(1, n.connections), color: '#00f0ff', subtitle: n.type,
   }));
-
   const links: GraphLink[] = relationships.map((rel) => ({
-    source: rel.orgA.id,
-    target: rel.orgB.id,
-    type: rel.type,
-    color: ORG_TYPE_COLORS[rel.type] || ORG_TYPE_COLORS.other,
-    notes: rel.notes || undefined,
+    source: rel.orgA.id, target: rel.orgB.id, type: rel.type,
+    color: ORG_TYPE_COLORS[rel.type] || ORG_TYPE_COLORS.other, notes: rel.notes || undefined,
   }));
-
   return { nodes, links, typeColorMap: ORG_TYPE_COLORS };
 }
 
@@ -513,37 +406,19 @@ export function buildPersonGraphData(
     personB: { id: string; name: string; title: string | null; tier: number };
   }>,
 ) {
-  const nodeMap = new Map<
-    string,
-    { id: string; name: string; title: string | null; tier: number; connections: number }
-  >();
-
+  const nodeMap = new Map<string, { id: string; name: string; title: string | null; tier: number; connections: number }>();
   for (const rel of relationships) {
-    if (!nodeMap.has(rel.personA.id)) {
-      nodeMap.set(rel.personA.id, { ...rel.personA, connections: 0 });
-    }
-    if (!nodeMap.has(rel.personB.id)) {
-      nodeMap.set(rel.personB.id, { ...rel.personB, connections: 0 });
-    }
+    if (!nodeMap.has(rel.personA.id)) nodeMap.set(rel.personA.id, { ...rel.personA, connections: 0 });
+    if (!nodeMap.has(rel.personB.id)) nodeMap.set(rel.personB.id, { ...rel.personB, connections: 0 });
     nodeMap.get(rel.personA.id)!.connections++;
     nodeMap.get(rel.personB.id)!.connections++;
   }
-
   const nodes: GraphNode[] = Array.from(nodeMap.values()).map((n) => ({
-    id: n.id,
-    name: n.name,
-    val: Math.max(1, n.connections),
-    color: '#00f0ff',
-    subtitle: n.title || undefined,
+    id: n.id, name: n.name, val: Math.max(1, n.connections), color: '#00f0ff', subtitle: n.title || undefined,
   }));
-
   const links: GraphLink[] = relationships.map((rel) => ({
-    source: rel.personA.id,
-    target: rel.personB.id,
-    type: rel.type,
-    color: PERSON_TYPE_COLORS[rel.type] || PERSON_TYPE_COLORS.other,
-    notes: rel.notes || undefined,
+    source: rel.personA.id, target: rel.personB.id, type: rel.type,
+    color: PERSON_TYPE_COLORS[rel.type] || PERSON_TYPE_COLORS.other, notes: rel.notes || undefined,
   }));
-
   return { nodes, links, typeColorMap: PERSON_TYPE_COLORS };
 }
