@@ -105,6 +105,7 @@ export async function updatePerson(id: string, data: Partial<{
   archetypes: string[];
   values: string[];
   commProfile: Record<string, unknown>;
+  culturalProfile: Record<string, unknown>;
   milestones: Record<string, unknown>[];
   talkingPoints: Record<string, unknown>[];
   availability: Record<string, unknown>;

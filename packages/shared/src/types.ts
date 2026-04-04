@@ -95,6 +95,59 @@ export interface FollowUpConfig {
   notes?: string;
 }
 
+// ── Cultural Profile ──
+
+export interface CulturalBackground {
+  raisedIn?: string;
+  parentsFrom?: string[];
+  educationType?: 'international' | 'local' | 'religious' | 'homeschool' | 'mixed';
+  urbanRural?: 'urban' | 'suburban' | 'rural';
+  languages?: Array<{ language: string; fluency: 'native' | 'fluent' | 'conversational' | 'basic'; learnedAt?: 'birth' | 'childhood' | 'adult' }>;
+  yearsAbroad?: Array<{ country: string; years: number }>;
+}
+
+export interface CulturalCommunication {
+  directness?: number; // 1-10
+  contextLevel?: 'high-context' | 'medium-context' | 'low-context';
+  feedbackStyle?: 'blunt' | 'diplomatic' | 'indirect' | 'avoidant';
+  conflictStyle?: 'confrontational' | 'diplomatic' | 'avoidant' | 'passive-aggressive';
+  formalityLevel?: 'formal' | 'semi-formal' | 'casual';
+  silenceMeaning?: 'thinking' | 'disagreement' | 'respect' | 'discomfort';
+}
+
+export interface CulturalTrust {
+  trustBasis?: 'institutional' | 'personal' | 'mixed';
+  corruptionAwareness?: 'low' | 'moderate' | 'high';
+  verificationNeeded?: 'low' | 'moderate' | 'high';
+  loyaltyPattern?: 'transactional' | 'reciprocal' | 'devotional';
+}
+
+export interface CulturalSocial {
+  hierarchyExpectation?: 'flat' | 'moderate' | 'steep';
+  decisionMaking?: 'individual' | 'consensus' | 'top-down';
+  timeOrientation?: 'strict' | 'flexible' | 'very-flexible';
+  relationshipBuilding?: 'fast' | 'moderate' | 'slow';
+  taskVsRelationship?: 'task-first' | 'balanced' | 'relationship-first';
+}
+
+export interface CulturalPersonal {
+  faithPosture?: 'active' | 'private' | 'secular' | 'unknown';
+  attachmentStyle?: 'secure' | 'anxious' | 'avoidant' | 'disorganized' | 'unknown';
+  birthOrder?: 'firstborn' | 'middle' | 'youngest' | 'only' | 'unknown';
+  classBackground?: 'working' | 'middle' | 'upper' | 'unknown';
+  handlesBeingWrong?: 'adjusts' | 'doubles-down' | 'goes-silent' | 'blames-others' | 'unknown';
+}
+
+export interface CulturalProfile {
+  background?: CulturalBackground;
+  communication?: CulturalCommunication;
+  trust?: CulturalTrust;
+  social?: CulturalSocial;
+  personal?: CulturalPersonal;
+  notes?: string;
+  source?: 'defaults' | 'observed' | 'mixed'; // how was this profile built
+}
+
 export interface VenueAvailability {
   days?: string[];
   hours?: string;
@@ -121,6 +174,7 @@ export interface Person {
   commProfile: CommProfile | null;
   milestones: Milestone[];
   talkingPoints: TalkingPoint[];
+  culturalProfile: CulturalProfile | null;
   availability: PersonAvailability | null;
   stage: RelationshipStage | null;
   stageHistory: StageTransition[];

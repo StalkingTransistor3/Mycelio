@@ -32,6 +32,7 @@ export const people = pgTable('people', {
   availability: jsonb('availability').$type<Record<string, unknown>>(),
   stage: varchar('stage', { length: 30 }).default('prospect'),
   stageHistory: jsonb('stage_history').$type<{ from: string | null; to: string; at: string; reason?: string }[]>().notNull().default([]),
+  culturalProfile: jsonb('cultural_profile').$type<Record<string, unknown>>(),
   followUpConfig: jsonb('follow_up_config').$type<Record<string, unknown>>(),
   snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
   lastContactAt: timestamp('last_contact_at', { withTimezone: true }),

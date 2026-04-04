@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { searchPeople, getPersonById, createPerson, updatePerson, addMilestone, addTalkingPoint, getUpcomingMilestones } from '../services/people.js';
+import { getCulturalDefaults, listCulturalDefaultKeys } from '../config/cultural-defaults.js';
 import { logInteraction, getInteractionsByPerson, getInteractionsByEvent, getPersonSentimentTrajectory } from '../services/interactions.js';
 import { createEvent, getEvents, getEventById } from '../services/events.js';
 import { createOrganization, getOrganizations, getOrganizationByName, getOrganizationHealth } from '../services/organizations.js';
@@ -203,6 +204,7 @@ export const tools: ToolDefinition[] = [
         archetypes: person.archetypes,
         values: person.values,
         commProfile: person.commProfile,
+        culturalProfile: person.culturalProfile,
       };
     },
   },
@@ -238,6 +240,7 @@ export const tools: ToolDefinition[] = [
             talkingPoints: (person.talkingPoints as Record<string, unknown>[])?.filter((tp: Record<string, unknown>) => tp.active !== false),
             milestones: person.milestones,
             commProfile: person.commProfile,
+            culturalProfile: person.culturalProfile,
             archetypes: person.archetypes,
             values: person.values,
           });
@@ -644,6 +647,143 @@ export const tools: ToolDefinition[] = [
 
       const person = await updatePerson(personId, updateData);
       return { success: true, person };
+    },
+  },
+
+  // 12b. update_cultural_profile
+  {
+    name: 'update_cultural_profile',
+    description: 'Update a person\'s cultural profile — background, communication style, trust patterns, social preferences, and personal traits. Set raisedIn to auto-populate defaults from cultural config. Override any field with observed behaviour.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        personId: { type: 'string', description: 'UUID of the person' },
+        personName: { type: 'string', description: 'Name of the person (if UUID not known)' },
+        background: {
+          type: 'object',
+          properties: {
+            raisedIn: { type: 'string', description: 'Country/region where raised (e.g. "philippines", "australia"). Setting this auto-fills defaults.' },
+            parentsFrom: { type: 'array', items: { type: 'string' }, description: 'Parents\' cultural origins (e.g. ["china", "indonesia"])' },
+            educationType: { type: 'string', enum: ['international', 'local', 'religious', 'homeschool', 'mixed'] },
+            urbanRural: { type: 'string', enum: ['urban', 'suburban', 'rural'] },
+            languages: { type: 'array', items: { type: 'object', properties: { language: { type: 'string' }, fluency: { type: 'string', enum: ['native', 'fluent', 'conversational', 'basic'] }, learnedAt: { type: 'string', enum: ['birth', 'childhood', 'adult'] } } } },
+            yearsAbroad: { type: 'array', items: { type: 'object', properties: { country: { type: 'string' }, years: { type: 'number' } } } },
+          },
+        },
+        communication: {
+          type: 'object',
+          properties: {
+            directness: { type: 'number', description: '1-10, 1=very indirect, 10=very direct' },
+            contextLevel: { type: 'string', enum: ['high-context', 'medium-context', 'low-context'] },
+            feedbackStyle: { type: 'string', enum: ['blunt', 'diplomatic', 'indirect', 'avoidant'] },
+            conflictStyle: { type: 'string', enum: ['confrontational', 'diplomatic', 'avoidant', 'passive-aggressive'] },
+            formalityLevel: { type: 'string', enum: ['formal', 'semi-formal', 'casual'] },
+            silenceMeaning: { type: 'string', enum: ['thinking', 'disagreement', 'respect', 'discomfort'] },
+          },
+        },
+        trust: {
+          type: 'object',
+          properties: {
+            trustBasis: { type: 'string', enum: ['institutional', 'personal', 'mixed'] },
+            corruptionAwareness: { type: 'string', enum: ['low', 'moderate', 'high'] },
+            verificationNeeded: { type: 'string', enum: ['low', 'moderate', 'high'] },
+            loyaltyPattern: { type: 'string', enum: ['transactional', 'reciprocal', 'devotional'] },
+          },
+        },
+        social: {
+          type: 'object',
+          properties: {
+            hierarchyExpectation: { type: 'string', enum: ['flat', 'moderate', 'steep'] },
+            decisionMaking: { type: 'string', enum: ['individual', 'consensus', 'top-down'] },
+            timeOrientation: { type: 'string', enum: ['strict', 'flexible', 'very-flexible'] },
+            relationshipBuilding: { type: 'string', enum: ['fast', 'moderate', 'slow'] },
+            taskVsRelationship: { type: 'string', enum: ['task-first', 'balanced', 'relationship-first'] },
+          },
+        },
+        personal: {
+          type: 'object',
+          properties: {
+            faithPosture: { type: 'string', enum: ['active', 'private', 'secular', 'unknown'] },
+            attachmentStyle: { type: 'string', enum: ['secure', 'anxious', 'avoidant', 'disorganized', 'unknown'] },
+            birthOrder: { type: 'string', enum: ['firstborn', 'middle', 'youngest', 'only', 'unknown'] },
+            classBackground: { type: 'string', enum: ['working', 'middle', 'upper', 'unknown'] },
+            handlesBeingWrong: { type: 'string', enum: ['adjusts', 'doubles-down', 'goes-silent', 'blames-others', 'unknown'] },
+          },
+        },
+        notes: { type: 'string', description: 'Free text cultural notes' },
+        applyDefaults: { type: 'boolean', description: 'If true and raisedIn is set, auto-populate from cultural defaults config (existing overrides preserved)' },
+      },
+    },
+    handler: async (args) => {
+      let personId = args.personId as string | undefined;
+      if (!personId && args.personName) {
+        personId = await resolvePersonId(args.personName as string);
+      }
+      if (!personId) return { error: 'Either personId or personName is required' };
+
+      // Get current profile
+      const person = await getPersonById(personId);
+      if (!person) return { error: 'Person not found' };
+      const existing = (person.culturalProfile as Record<string, unknown>) || {};
+
+      // Build new profile
+      const profile: Record<string, unknown> = { ...existing };
+
+      // If raisedIn is provided and applyDefaults is true, seed from cultural defaults
+      const bg = args.background as Record<string, unknown> | undefined;
+      if (bg?.raisedIn && args.applyDefaults !== false) {
+        const defaults = getCulturalDefaults(bg.raisedIn as string);
+        if (defaults) {
+          // Seed defaults (don't overwrite existing observed data)
+          if (!profile.communication) profile.communication = { ...defaults.communication };
+          if (!profile.trust) profile.trust = { ...defaults.trust };
+          if (!profile.social) profile.social = { ...defaults.social };
+          if (!profile.notes && defaults.notes) profile.notes = defaults.notes;
+          profile.source = profile.source || 'defaults';
+        }
+      }
+
+      // Apply explicit overrides
+      if (bg) profile.background = { ...((existing.background as object) || {}), ...bg };
+      if (args.communication) {
+        profile.communication = { ...((profile.communication as object) || {}), ...(args.communication as object) };
+        profile.source = 'mixed';
+      }
+      if (args.trust) {
+        profile.trust = { ...((profile.trust as object) || {}), ...(args.trust as object) };
+        profile.source = 'mixed';
+      }
+      if (args.social) {
+        profile.social = { ...((profile.social as object) || {}), ...(args.social as object) };
+        profile.source = 'mixed';
+      }
+      if (args.personal) profile.personal = { ...((existing.personal as object) || {}), ...(args.personal as object) };
+      if (args.notes) profile.notes = args.notes;
+
+      const updated = await updatePerson(personId, { culturalProfile: profile });
+      return { success: true, person: updated, culturalProfile: profile };
+    },
+  },
+
+  // 12c. get_cultural_defaults
+  {
+    name: 'get_cultural_defaults',
+    description: 'Get cultural default proclivities for a country/region. Use to understand baseline communication, trust, and social patterns before meeting someone. Returns null if no defaults configured for that culture.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        culture: { type: 'string', description: 'Country or region key (e.g. "japan", "philippines", "gulf-states"). Use list_cultures to see all available keys.' },
+        listAll: { type: 'boolean', description: 'If true, returns all available culture keys instead of a specific culture\'s defaults' },
+      },
+    },
+    handler: async (args) => {
+      if (args.listAll) {
+        return { cultures: listCulturalDefaultKeys() };
+      }
+      if (!args.culture) return { error: 'Provide a culture key or set listAll=true' };
+      const defaults = getCulturalDefaults(args.culture as string);
+      if (!defaults) return { error: `No defaults for "${args.culture}". Use listAll=true to see available cultures.`, availableCultures: listCulturalDefaultKeys() };
+      return { culture: args.culture, defaults };
     },
   },
 
