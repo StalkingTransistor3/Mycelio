@@ -1,7 +1,9 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useOrgRelationships, useCreateOrgRelationship, useDeleteOrgRelationship } from '../hooks/useRelationships.js';
 import { useOrganizations } from '../hooks/useOrganizations.js';
+import { api } from '../api/client.js';
+import { useQuery } from '@tanstack/react-query';
 import type { Organization, OrgRelationshipEnriched } from '@mycelio/shared';
 import Modal from '../components/Modal.js';
 import { Button } from '../components/FormField.js';
@@ -26,7 +28,6 @@ const typeColors: Record<string, string> = {
 type ViewMode = 'list' | 'graph';
 
 export default function OrgNetwork() {
-  const navigate = useNavigate();
   const { data: relationships, isLoading } = useOrgRelationships();
   const createMutation = useCreateOrgRelationship();
   const deleteMutation = useDeleteOrgRelationship();
@@ -105,9 +106,19 @@ export default function OrgNetwork() {
   // Build graph data from filtered relationships
   const graphData = useMemo(() => buildOrgGraphData(filtered), [filtered]);
 
-  const handleNodeNavigate = useCallback((nodeId: string) => {
-    navigate(`/organisations/${nodeId}`);
-  }, [navigate]);
+  // Sidebar state for node selection
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  const handleNodeSelect = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId);
+  }, []);
+
+  const { data: selectedOrgData } = useQuery({
+    queryKey: ['organization', selectedNodeId],
+    queryFn: () => api.getOrganization(selectedNodeId!),
+    enabled: !!selectedNodeId,
+    select: (res) => res.data as Organization,
+  });
 
   return (
     <div>
@@ -181,15 +192,88 @@ export default function OrgNetwork() {
 
       {/* Graph view */}
       {viewMode === 'graph' && !isLoading && (
-        <div ref={graphContainerRef} className="glass rounded-xl neon-border overflow-hidden">
+        <div ref={graphContainerRef} className="glass rounded-xl neon-border overflow-hidden relative">
           <RelationshipGraph
             nodes={graphData.nodes}
             links={graphData.links}
             width={graphSize.width}
             height={graphSize.height}
             typeColorMap={graphData.typeColorMap}
-            onNodeNavigate={handleNodeNavigate}
+            onNodeSelect={handleNodeSelect}
           />
+
+          {/* Org detail sidebar */}
+          <div
+            className={`absolute top-0 right-0 h-full w-80 glass border-l border-white/10 z-20 transition-transform duration-300 ease-in-out overflow-y-auto ${
+              selectedNodeId ? 'translate-x-0' : 'translate-x-full'
+            }`}
+            style={{ backgroundColor: 'rgba(10, 10, 15, 0.95)' }}
+          >
+            {selectedNodeId && (
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-mono text-white/40 uppercase tracking-wider">Organization Details</h3>
+                  <button
+                    onClick={() => setSelectedNodeId(null)}
+                    className="text-white/30 hover:text-white/70 transition-colors text-lg leading-none"
+                  >
+                    &times;
+                  </button>
+                </div>
+                {selectedOrgData ? (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-lg font-bold text-white/90 font-mono">{selectedOrgData.name}</div>
+                      {selectedOrgData.type && (
+                        <div className="text-sm text-white/40 mt-0.5">{selectedOrgData.type}</div>
+                      )}
+                    </div>
+                    <div className="space-y-2 text-xs font-mono">
+                      {selectedOrgData.industry && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-white/30">Industry</span>
+                          <span className="text-white/60">{selectedOrgData.industry}</span>
+                        </div>
+                      )}
+                      {selectedOrgData.domain && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-white/30">Domain</span>
+                          <span className="text-[#00f0ff]/70">{selectedOrgData.domain}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <span className="text-white/30">Members</span>
+                        <span className="text-white/60">{selectedOrgData.memberIds?.length ?? 0}</span>
+                      </div>
+                    </div>
+                    {selectedOrgData.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {selectedOrgData.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/40 font-mono"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {selectedOrgData.description && (
+                      <p className="text-white/30 text-xs leading-relaxed">{selectedOrgData.description}</p>
+                    )}
+                    <Link
+                      to={`/organisations/${selectedNodeId}`}
+                      className="mt-4 block w-full px-3 py-2 text-center text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-[#00f0ff]/80 hover:text-[#00f0ff] hover:border-[#00f0ff]/40 transition-all"
+                    >
+                      View Profile &rarr;
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="text-white/30 text-sm animate-pulse">Loading...</div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

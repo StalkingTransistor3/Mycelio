@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { usePersonRelationships, useCreatePersonRelationship, useDeletePersonRelationship } from '../hooks/useRelationships.js';
 import { api } from '../api/client.js';
 import { useQuery } from '@tanstack/react-query';
@@ -45,7 +45,6 @@ const typeColors: Record<string, string> = {
 type ViewMode = 'list' | 'graph';
 
 export default function PersonNetwork() {
-  const navigate = useNavigate();
   const { data: relationships, isLoading } = usePersonRelationships();
   const createMutation = useCreatePersonRelationship();
   const deleteMutation = useDeletePersonRelationship();
@@ -121,9 +120,19 @@ export default function PersonNetwork() {
   // Build graph data from filtered relationships
   const graphData = useMemo(() => buildPersonGraphData(filtered), [filtered]);
 
-  const handleNodeNavigate = useCallback((nodeId: string) => {
-    navigate(`/people/${nodeId}`);
-  }, [navigate]);
+  // Sidebar state for node selection
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  const handleNodeSelect = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId);
+  }, []);
+
+  const { data: selectedPersonData } = useQuery({
+    queryKey: ['person', selectedNodeId],
+    queryFn: () => api.getPerson(selectedNodeId!),
+    enabled: !!selectedNodeId,
+    select: (res) => res.data as Person,
+  });
 
   return (
     <div>
@@ -187,15 +196,85 @@ export default function PersonNetwork() {
 
       {/* Graph view */}
       {viewMode === 'graph' && !isLoading && (
-        <div ref={graphContainerRef} className="glass rounded-xl neon-border overflow-hidden">
+        <div ref={graphContainerRef} className="glass rounded-xl neon-border overflow-hidden relative">
           <RelationshipGraph
             nodes={graphData.nodes}
             links={graphData.links}
             width={graphSize.width}
             height={graphSize.height}
             typeColorMap={graphData.typeColorMap}
-            onNodeNavigate={handleNodeNavigate}
+            onNodeSelect={handleNodeSelect}
           />
+
+          {/* Node detail sidebar */}
+          <div
+            className={`absolute top-0 right-0 h-full w-80 glass border-l border-white/10 z-20 transition-transform duration-300 ease-in-out overflow-y-auto ${
+              selectedNodeId ? 'translate-x-0' : 'translate-x-full'
+            }`}
+            style={{ backgroundColor: 'rgba(10, 10, 15, 0.95)' }}
+          >
+            {selectedNodeId && (
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-mono text-white/40 uppercase tracking-wider">Person Details</h3>
+                  <button
+                    onClick={() => setSelectedNodeId(null)}
+                    className="text-white/30 hover:text-white/70 transition-colors text-lg leading-none"
+                  >
+                    &times;
+                  </button>
+                </div>
+                {selectedPersonData ? (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-lg font-bold text-white/90 font-mono">{selectedPersonData.name}</div>
+                      {selectedPersonData.title && (
+                        <div className="text-sm text-white/40 mt-0.5">{selectedPersonData.title}</div>
+                      )}
+                    </div>
+                    <div className="space-y-2 text-xs font-mono">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white/30">Tier</span>
+                        <span className="text-[#00f0ff]">T{selectedPersonData.tier}</span>
+                      </div>
+                      {selectedPersonData.stage && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-white/30">Stage</span>
+                          <span className="text-white/60">{selectedPersonData.stage}</span>
+                        </div>
+                      )}
+                      {selectedPersonData.lastContactAt && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-white/30">Last Contact</span>
+                          <span className="text-white/60">{new Date(selectedPersonData.lastContactAt).toLocaleDateString()}</span>
+                        </div>
+                      )}
+                    </div>
+                    {selectedPersonData.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {selectedPersonData.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/40 font-mono"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <Link
+                      to={`/people/${selectedNodeId}`}
+                      className="mt-4 block w-full px-3 py-2 text-center text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-[#00f0ff]/80 hover:text-[#00f0ff] hover:border-[#00f0ff]/40 transition-all"
+                    >
+                      View Profile &rarr;
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="text-white/30 text-sm animate-pulse">Loading...</div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

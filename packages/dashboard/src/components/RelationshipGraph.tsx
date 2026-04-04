@@ -60,14 +60,14 @@ interface Props {
   width: number;
   height: number;
   typeColorMap: Record<string, string>;
-  onNodeNavigate?: (nodeId: string) => void;
+  onNodeSelect?: (nodeId: string) => void;
 }
 
 // --- Orbital rotation constants ---
 const ORBIT_PERIOD_MS = 75000; // Full rotation in 75 seconds
 const ORBIT_RESUME_DELAY_MS = 2500; // Resume orbit after 2.5s of no interaction
 
-export default function RelationshipGraph({ nodes, links, width, height, typeColorMap, onNodeNavigate }: Props) {
+export default function RelationshipGraph({ nodes, links, width, height, typeColorMap, onNodeSelect }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(undefined);
   const [highlightNodes, setHighlightNodes] = useState<Set<string>>(new Set());
@@ -80,6 +80,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
   const orbitPausedRef = useRef(false);
   const orbitResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orbitInteractingRef = useRef(false);
+  const orbitAngleRef = useRef(0);
 
   // Pause orbit on user interaction
   const pauseOrbit = useCallback(() => {
@@ -152,10 +153,9 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     (node: GraphNode) => {
       pauseOrbit();
       scheduleOrbitResume();
-      // Navigate to detail page if handler provided
-      if (onNodeNavigate) {
-        onNodeNavigate(node.id);
-        return;
+      // Select node (open sidebar) if handler provided
+      if (onNodeSelect) {
+        onNodeSelect(node.id);
       }
       // On click, toggle highlight (if already highlighted, clear; else highlight)
       if (hoveredNode === node.id) {
@@ -171,7 +171,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         fgRef.current.zoom(2, 400);
       }
     },
-    [hoveredNode, handleNodeHover, onNodeNavigate, pauseOrbit, scheduleOrbitResume],
+    [hoveredNode, handleNodeHover, onNodeSelect, pauseOrbit, scheduleOrbitResume],
   );
 
   const handleBackgroundClick = useCallback(() => {
@@ -311,16 +311,13 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     scheduleOrbitResume();
   }, [scheduleOrbitResume]);
 
-  // --- Orbital rotation via CSS transform on graph container ---
-  // Uses ref + direct DOM manipulation to avoid React re-renders on every frame.
-  const orbitAngleValueRef = useRef(0);
-  const graphContainerRef = useRef<HTMLDivElement>(null);
-
+  // --- Orbital rotation via node position manipulation ---
+  // Rotates all node positions around the center of mass each frame.
   useEffect(() => {
     const orbitTick = (timestamp: number) => {
       orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
 
-      if (orbitPausedRef.current) return;
+      if (orbitPausedRef.current || !fgRef.current) return;
 
       if (orbitLastTimeRef.current === 0) {
         orbitLastTimeRef.current = timestamp;
@@ -330,21 +327,52 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       const dt = timestamp - orbitLastTimeRef.current;
       orbitLastTimeRef.current = timestamp;
 
-      // Angular velocity: one full rotation (360deg) in ORBIT_PERIOD_MS
-      const degreesPerMs = 360 / ORBIT_PERIOD_MS;
-      orbitAngleValueRef.current += degreesPerMs * dt;
-      if (orbitAngleValueRef.current >= 360) {
-        orbitAngleValueRef.current -= 360;
+      // Angular velocity: one full rotation (2*PI radians) in ORBIT_PERIOD_MS
+      const angularVelocity = (2 * Math.PI) / ORBIT_PERIOD_MS;
+      const dAngle = angularVelocity * dt;
+      orbitAngleRef.current += dAngle;
+      if (orbitAngleRef.current > 2 * Math.PI) {
+        orbitAngleRef.current -= 2 * Math.PI;
       }
 
-      // Apply directly to DOM for performance (avoids React state + re-render)
-      if (graphContainerRef.current) {
-        graphContainerRef.current.style.transform = `rotate(${orbitAngleValueRef.current}deg)`;
+      // Get current graph data and rotate node positions around center of mass
+      const gd = fgRef.current.graphData();
+      if (!gd || !gd.nodes || gd.nodes.length === 0) return;
+
+      const graphNodes = gd.nodes as GraphNode[];
+
+      // Compute center of mass
+      let cx = 0, cy = 0, count = 0;
+      for (const n of graphNodes) {
+        if (n.x != null && n.y != null) {
+          cx += n.x;
+          cy += n.y;
+          count++;
+        }
       }
+      if (count === 0) return;
+      cx /= count;
+      cy /= count;
+
+      // Rotate each node around center of mass
+      const cosA = Math.cos(dAngle);
+      const sinA = Math.sin(dAngle);
+      for (const n of graphNodes) {
+        if (n.x != null && n.y != null) {
+          const dx = n.x - cx;
+          const dy = n.y - cy;
+          n.x = cx + dx * cosA - dy * sinA;
+          n.y = cy + dx * sinA + dy * cosA;
+        }
+      }
+
+      // Trigger re-render without reheating the simulation
+      fgRef.current.graphData(gd);
     };
 
     orbitLastTimeRef.current = 0;
     orbitPausedRef.current = false;
+    orbitAngleRef.current = 0;
     orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
 
     return () => {
@@ -372,7 +400,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
 
   return (
     <div style={{ position: 'relative', width, height, overflow: 'hidden' }}>
-      {/* Legend — stays fixed, not rotated */}
+      {/* Legend */}
       <div className="absolute top-3 left-3 z-10 glass rounded-lg px-3 py-2 border border-white/10">
         <div className="text-white/40 text-[10px] font-mono mb-1 uppercase tracking-wider">Type</div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -388,40 +416,29 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         </div>
       </div>
 
-      {/* Rotating graph container */}
-      <div
-        ref={graphContainerRef}
-        style={{
-          width,
-          height,
-          transform: 'rotate(0deg)',
-          willChange: 'transform',
-        }}
-      >
-        <ForceGraph2D
-          ref={fgRef}
-          graphData={graphData}
-          width={width}
-          height={height}
-          backgroundColor="#0a0a0f"
-          nodeCanvasObject={paintNode}
-          nodeCanvasObjectMode={() => 'replace'}
-          nodePointerAreaPaint={nodePointerAreaPaint}
-          linkCanvasObject={paintLink}
-          linkCanvasObjectMode={() => 'replace'}
-          onNodeHover={handleNodeHover}
-          onNodeClick={handleNodeClick}
-          onBackgroundClick={handleBackgroundClick}
-          onZoom={handleZoom}
-          onNodeDrag={handleNodeDrag}
-          onNodeDragEnd={handleNodeDragEnd}
-          enableNodeDrag={true}
-          cooldownTicks={100}
-          d3AlphaDecay={0.02}
-          d3VelocityDecay={0.3}
-          warmupTicks={50}
-        />
-      </div>
+      <ForceGraph2D
+        ref={fgRef}
+        graphData={graphData}
+        width={width}
+        height={height}
+        backgroundColor="#0a0a0f"
+        nodeCanvasObject={paintNode}
+        nodeCanvasObjectMode={() => 'replace'}
+        nodePointerAreaPaint={nodePointerAreaPaint}
+        linkCanvasObject={paintLink}
+        linkCanvasObjectMode={() => 'replace'}
+        onNodeHover={handleNodeHover}
+        onNodeClick={handleNodeClick}
+        onBackgroundClick={handleBackgroundClick}
+        onZoom={handleZoom}
+        onNodeDrag={handleNodeDrag}
+        onNodeDragEnd={handleNodeDragEnd}
+        enableNodeDrag={true}
+        cooldownTicks={100}
+        d3AlphaDecay={0.02}
+        d3VelocityDecay={0.3}
+        warmupTicks={50}
+      />
     </div>
   );
 }
