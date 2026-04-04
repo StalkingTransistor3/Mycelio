@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 // ForceGraphMethods type unused due to complex generics; ref typed as any
 
@@ -254,6 +254,30 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     [],
   );
 
+  // Orbit: after layout settles, add gentle tangential velocity via d3 force
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!fgRef.current) return;
+      const omega = 0.0003;
+      fgRef.current.d3Force('orbit', () => {
+        const gd = fgRef.current?.graphData();
+        if (!gd?.nodes?.length) return;
+        const ns = gd.nodes as GraphNode[];
+        let cx = 0, cy = 0, c = 0;
+        for (const n of ns) { if (n.x != null && n.y != null) { cx += n.x; cy += n.y; c++; } }
+        if (c === 0) return;
+        cx /= c; cy /= c;
+        for (const n of ns) {
+          if (n.x != null && n.y != null) {
+            n.vx! += -omega * (n.y! - cy);
+            n.vy! += omega * (n.x! - cx);
+          }
+        }
+      });
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
   if (nodes.length === 0) {
     return (
       <div
@@ -298,8 +322,9 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         onNodeClick={handleNodeClick}
         onBackgroundClick={handleBackgroundClick}
         enableNodeDrag={true}
-        cooldownTicks={100}
-        d3AlphaDecay={0.02}
+        cooldownTicks={Infinity}
+        cooldownTime={Infinity}
+        d3AlphaDecay={0.005}
         d3VelocityDecay={0.3}
         warmupTicks={50}
       />
