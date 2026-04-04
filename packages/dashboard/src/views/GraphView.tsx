@@ -1,8 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useGraph, useEgoGraph } from '../hooks/useGraph.js';
-import { api } from '../api/client.js';
-import { useQuery } from '@tanstack/react-query';
 import NetworkGraph from '../graph/NetworkGraph.js';
 import type { GraphAPI } from '../graph/NetworkGraph.js';
 import GraphControls from '../graph/GraphControls.js';
@@ -11,7 +9,6 @@ import GraphSimControls from '../graph/GraphSimControls.js';
 import { DEFAULT_SIM_PARAMS } from '../graph/GraphSimControls.js';
 import type { SimParams } from '../graph/GraphSimControls.js';
 import type { GraphNode } from '@mycelio/shared';
-import type { Person } from '@mycelio/shared';
 
 const tierColor: Record<number, string> = {
   1: '#ff00e5',
@@ -77,19 +74,10 @@ export default function GraphView() {
   const isEgoMode = egoNodeId !== null;
   const activeGraph = isEgoMode && egoGraph ? egoGraph : overviewGraph;
 
-  // Sidebar state for node selection
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-
   const handleNodeClick = useCallback((node: GraphNode) => {
-    setSelectedNodeId(node.id);
+    setEgoNodeId(node.id);
+    setEgoDepth(1);
   }, []);
-
-  const { data: selectedPersonData } = useQuery({
-    queryKey: ['person', selectedNodeId],
-    queryFn: () => api.getPerson(selectedNodeId!),
-    enabled: !!selectedNodeId,
-    select: (res) => res.data as Person,
-  });
 
   const exitEgoMode = useCallback(() => {
     setEgoNodeId(null);
@@ -309,7 +297,7 @@ export default function GraphView() {
           )}
 
           {/* Hover tooltip */}
-          {hoveredNode && !selectedNodeId && (
+          {hoveredNode && (
             <div
               className="absolute pointer-events-none z-50 px-3 py-2 glass rounded-lg neon-border text-xs font-mono"
               style={{ top: 12, right: 12 }}
@@ -329,76 +317,6 @@ export default function GraphView() {
               </div>
             </div>
           )}
-
-          {/* Node detail sidebar */}
-          <div
-            className={`absolute top-0 right-0 h-full w-80 glass border-l border-white/10 z-20 transition-transform duration-300 ease-in-out overflow-y-auto ${
-              selectedNodeId && !isEgoMode ? 'translate-x-0' : 'translate-x-full'
-            }`}
-            style={{ backgroundColor: 'rgba(10, 10, 15, 0.95)' }}
-          >
-            {selectedNodeId && !isEgoMode && (
-              <div className="p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-mono text-white/40 uppercase tracking-wider">Person Details</h3>
-                  <button
-                    onClick={() => setSelectedNodeId(null)}
-                    className="text-white/30 hover:text-white/70 transition-colors text-lg leading-none"
-                  >
-                    &times;
-                  </button>
-                </div>
-                {selectedPersonData ? (
-                  <div className="space-y-3">
-                    <div>
-                      <div className="text-lg font-bold text-white/90 font-mono">{selectedPersonData.name}</div>
-                      {selectedPersonData.title && (
-                        <div className="text-sm text-white/40 mt-0.5">{selectedPersonData.title}</div>
-                      )}
-                    </div>
-                    <div className="space-y-2 text-xs font-mono">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white/30">Tier</span>
-                        <span className="text-[#00f0ff]">T{selectedPersonData.tier} — {tierLabel[selectedPersonData.tier]}</span>
-                      </div>
-                      {selectedPersonData.stage && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-white/30">Stage</span>
-                          <span className="text-white/60">{selectedPersonData.stage}</span>
-                        </div>
-                      )}
-                      {selectedPersonData.lastContactAt && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-white/30">Last Contact</span>
-                          <span className="text-white/60">{new Date(selectedPersonData.lastContactAt).toLocaleDateString()}</span>
-                        </div>
-                      )}
-                    </div>
-                    {selectedPersonData.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {selectedPersonData.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/40 font-mono"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <Link
-                      to={`/people/${selectedNodeId}`}
-                      className="mt-4 block w-full px-3 py-2 text-center text-xs font-mono bg-white/5 border border-white/10 rounded-lg text-[#00f0ff]/80 hover:text-[#00f0ff] hover:border-[#00f0ff]/40 transition-all"
-                    >
-                      View Profile &rarr;
-                    </Link>
-                  </div>
-                ) : (
-                  <div className="text-white/30 text-sm animate-pulse">Loading...</div>
-                )}
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Ego side panel */}

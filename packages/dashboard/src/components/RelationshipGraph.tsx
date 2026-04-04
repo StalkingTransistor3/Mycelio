@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 // ForceGraphMethods type unused due to complex generics; ref typed as any
 
@@ -60,13 +60,9 @@ interface Props {
   width: number;
   height: number;
   typeColorMap: Record<string, string>;
-  onNodeSelect?: (nodeId: string) => void;
 }
 
-// --- Orbit ---
-const ORBIT_SPEED = 0.0003; // radians per tick — very slow
-
-export default function RelationshipGraph({ nodes, links, width, height, typeColorMap, onNodeSelect }: Props) {
+export default function RelationshipGraph({ nodes, links, width, height, typeColorMap }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(undefined);
   const [highlightNodes, setHighlightNodes] = useState<Set<string>>(new Set());
@@ -117,7 +113,6 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
 
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
-      if (onNodeSelect) onNodeSelect(node.id);
       // On click, toggle highlight (if already highlighted, clear; else highlight)
       if (hoveredNode === node.id) {
         setHighlightNodes(new Set());
@@ -132,7 +127,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         fgRef.current.zoom(2, 400);
       }
     },
-    [hoveredNode, handleNodeHover, onNodeSelect],
+    [hoveredNode, handleNodeHover],
   );
 
   const handleBackgroundClick = useCallback(() => {
@@ -257,40 +252,6 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     [],
   );
 
-  // --- Orbit: after layout settles, add a gentle tangential velocity force ---
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!fgRef.current) return;
-
-      // Layout is done. Add a weak orbit force alongside existing forces.
-      // We keep charge/center/link so the structure holds — orbit is just
-      // a gentle tangential nudge on top.
-      fgRef.current.d3Force('orbit', () => {
-        const gd = fgRef.current?.graphData();
-        if (!gd?.nodes?.length) return;
-        const ns = gd.nodes as GraphNode[];
-
-        // Center of mass
-        let cx = 0, cy = 0, count = 0;
-        for (const n of ns) {
-          if (n.x != null && n.y != null) { cx += n.x; cy += n.y; count++; }
-        }
-        if (count === 0) return;
-        cx /= count; cy /= count;
-
-        // Add tangential velocity (perpendicular to radius)
-        for (const n of ns) {
-          if (n.x != null && n.y != null) {
-            n.vx! += -ORBIT_SPEED * (n.y! - cy);
-            n.vy! += ORBIT_SPEED * (n.x! - cx);
-          }
-        }
-      });
-    }, 5000);
-
-    return () => clearTimeout(timer);
-  }, []);
-
   if (nodes.length === 0) {
     return (
       <div
@@ -335,9 +296,8 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         onNodeClick={handleNodeClick}
         onBackgroundClick={handleBackgroundClick}
         enableNodeDrag={true}
-        cooldownTicks={Infinity}
-        cooldownTime={Infinity}
-        d3AlphaDecay={0}
+        cooldownTicks={100}
+        d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
         warmupTicks={50}
       />
