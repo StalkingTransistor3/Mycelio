@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useOrgRelationships, useCreateOrgRelationship, useDeleteOrgRelationship } from '../hooks/useRelationships.js';
 import { useOrganizations } from '../hooks/useOrganizations.js';
 import type { Organization, OrgRelationshipEnriched } from '@mycelio/shared';
@@ -26,6 +26,7 @@ const typeColors: Record<string, string> = {
 type ViewMode = 'list' | 'graph';
 
 export default function OrgNetwork() {
+  const navigate = useNavigate();
   const { data: relationships, isLoading } = useOrgRelationships();
   const createMutation = useCreateOrgRelationship();
   const deleteMutation = useDeleteOrgRelationship();
@@ -103,6 +104,10 @@ export default function OrgNetwork() {
 
   // Build graph data from filtered relationships
   const graphData = useMemo(() => buildOrgGraphData(filtered), [filtered]);
+
+  const handleNodeNavigate = useCallback((nodeId: string) => {
+    navigate(`/organisations/${nodeId}`);
+  }, [navigate]);
 
   return (
     <div>
@@ -183,6 +188,7 @@ export default function OrgNetwork() {
             width={graphSize.width}
             height={graphSize.height}
             typeColorMap={graphData.typeColorMap}
+            onNodeNavigate={handleNodeNavigate}
           />
         </div>
       )}

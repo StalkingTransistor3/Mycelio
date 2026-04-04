@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { usePersonRelationships, useCreatePersonRelationship, useDeletePersonRelationship } from '../hooks/useRelationships.js';
 import { api } from '../api/client.js';
 import { useQuery } from '@tanstack/react-query';
@@ -45,6 +45,7 @@ const typeColors: Record<string, string> = {
 type ViewMode = 'list' | 'graph';
 
 export default function PersonNetwork() {
+  const navigate = useNavigate();
   const { data: relationships, isLoading } = usePersonRelationships();
   const createMutation = useCreatePersonRelationship();
   const deleteMutation = useDeletePersonRelationship();
@@ -120,6 +121,10 @@ export default function PersonNetwork() {
   // Build graph data from filtered relationships
   const graphData = useMemo(() => buildPersonGraphData(filtered), [filtered]);
 
+  const handleNodeNavigate = useCallback((nodeId: string) => {
+    navigate(`/people/${nodeId}`);
+  }, [navigate]);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -189,6 +194,7 @@ export default function PersonNetwork() {
             width={graphSize.width}
             height={graphSize.height}
             typeColorMap={graphData.typeColorMap}
+            onNodeNavigate={handleNodeNavigate}
           />
         </div>
       )}

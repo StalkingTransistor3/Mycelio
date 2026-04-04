@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useGraph, useEgoGraph } from '../hooks/useGraph.js';
 import NetworkGraph from '../graph/NetworkGraph.js';
 import type { GraphAPI } from '../graph/NetworkGraph.js';
@@ -27,6 +27,7 @@ const tierLabel: Record<number, string> = {
 };
 
 export default function GraphView() {
+  const navigate = useNavigate();
   // Tier filter drives server-side fetch
   const [tierFilter, setTierFilter] = useState<number | null>(3);
   const graphTier = tierFilter || 5; // null = all tiers = tier 5
@@ -75,9 +76,8 @@ export default function GraphView() {
   const activeGraph = isEgoMode && egoGraph ? egoGraph : overviewGraph;
 
   const handleNodeClick = useCallback((node: GraphNode) => {
-    setEgoNodeId(node.id);
-    setEgoDepth(1);
-  }, []);
+    navigate(`/people/${node.id}`);
+  }, [navigate]);
 
   const exitEgoMode = useCallback(() => {
     setEgoNodeId(null);

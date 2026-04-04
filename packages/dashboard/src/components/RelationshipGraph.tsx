@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 // ForceGraphMethods type unused due to complex generics; ref typed as any
 
@@ -60,14 +60,49 @@ interface Props {
   width: number;
   height: number;
   typeColorMap: Record<string, string>;
+  onNodeNavigate?: (nodeId: string) => void;
 }
 
-export default function RelationshipGraph({ nodes, links, width, height, typeColorMap }: Props) {
+// --- Orbital rotation constants ---
+const ORBIT_PERIOD_MS = 75000; // Full rotation in 75 seconds
+const ORBIT_RESUME_DELAY_MS = 2500; // Resume orbit after 2.5s of no interaction
+
+export default function RelationshipGraph({ nodes, links, width, height, typeColorMap, onNodeNavigate }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(undefined);
   const [highlightNodes, setHighlightNodes] = useState<Set<string>>(new Set());
   const [highlightLinks, setHighlightLinks] = useState<Set<string>>(new Set());
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+
+  // --- Orbital rotation state ---
+  const orbitAnimFrameRef = useRef<number | null>(null);
+  const orbitLastTimeRef = useRef<number>(0);
+  const orbitPausedRef = useRef(false);
+  const orbitResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const orbitInteractingRef = useRef(false);
+
+  // Pause orbit on user interaction
+  const pauseOrbit = useCallback(() => {
+    orbitPausedRef.current = true;
+    orbitInteractingRef.current = true;
+    if (orbitResumeTimerRef.current != null) {
+      clearTimeout(orbitResumeTimerRef.current);
+      orbitResumeTimerRef.current = null;
+    }
+  }, []);
+
+  // Schedule orbit resume after delay
+  const scheduleOrbitResume = useCallback(() => {
+    orbitInteractingRef.current = false;
+    if (orbitResumeTimerRef.current != null) {
+      clearTimeout(orbitResumeTimerRef.current);
+    }
+    orbitResumeTimerRef.current = setTimeout(() => {
+      orbitPausedRef.current = false;
+      orbitLastTimeRef.current = 0; // reset to avoid jump
+      orbitResumeTimerRef.current = null;
+    }, ORBIT_RESUME_DELAY_MS);
+  }, []);
 
   // Build adjacency map for highlight propagation
   const adjacency = useMemo(() => {
@@ -98,8 +133,10 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         setHighlightNodes(new Set());
         setHighlightLinks(new Set());
         setHoveredNode(null);
+        scheduleOrbitResume();
         return;
       }
+      pauseOrbit();
       const nodeId = node.id;
       const neighbors = adjacency.neighbors.get(nodeId) || new Set();
       const newHighlightNodes = new Set<string>([nodeId, ...neighbors]);
@@ -108,11 +145,18 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
       setHighlightLinks(newHighlightLinks);
       setHoveredNode(nodeId);
     },
-    [adjacency],
+    [adjacency, pauseOrbit, scheduleOrbitResume],
   );
 
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
+      pauseOrbit();
+      scheduleOrbitResume();
+      // Navigate to detail page if handler provided
+      if (onNodeNavigate) {
+        onNodeNavigate(node.id);
+        return;
+      }
       // On click, toggle highlight (if already highlighted, clear; else highlight)
       if (hoveredNode === node.id) {
         setHighlightNodes(new Set());
@@ -127,7 +171,7 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         fgRef.current.zoom(2, 400);
       }
     },
-    [hoveredNode, handleNodeHover],
+    [hoveredNode, handleNodeHover, onNodeNavigate, pauseOrbit, scheduleOrbitResume],
   );
 
   const handleBackgroundClick = useCallback(() => {
@@ -252,6 +296,69 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
     [],
   );
 
+  // Pause orbit on zoom interaction
+  const handleZoom = useCallback(() => {
+    pauseOrbit();
+    scheduleOrbitResume();
+  }, [pauseOrbit, scheduleOrbitResume]);
+
+  // Pause orbit on node drag
+  const handleNodeDrag = useCallback(() => {
+    pauseOrbit();
+  }, [pauseOrbit]);
+
+  const handleNodeDragEnd = useCallback(() => {
+    scheduleOrbitResume();
+  }, [scheduleOrbitResume]);
+
+  // --- Orbital rotation via CSS transform on graph container ---
+  // Uses ref + direct DOM manipulation to avoid React re-renders on every frame.
+  const orbitAngleValueRef = useRef(0);
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const orbitTick = (timestamp: number) => {
+      orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
+
+      if (orbitPausedRef.current) return;
+
+      if (orbitLastTimeRef.current === 0) {
+        orbitLastTimeRef.current = timestamp;
+        return;
+      }
+
+      const dt = timestamp - orbitLastTimeRef.current;
+      orbitLastTimeRef.current = timestamp;
+
+      // Angular velocity: one full rotation (360deg) in ORBIT_PERIOD_MS
+      const degreesPerMs = 360 / ORBIT_PERIOD_MS;
+      orbitAngleValueRef.current += degreesPerMs * dt;
+      if (orbitAngleValueRef.current >= 360) {
+        orbitAngleValueRef.current -= 360;
+      }
+
+      // Apply directly to DOM for performance (avoids React state + re-render)
+      if (graphContainerRef.current) {
+        graphContainerRef.current.style.transform = `rotate(${orbitAngleValueRef.current}deg)`;
+      }
+    };
+
+    orbitLastTimeRef.current = 0;
+    orbitPausedRef.current = false;
+    orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
+
+    return () => {
+      if (orbitAnimFrameRef.current != null) {
+        cancelAnimationFrame(orbitAnimFrameRef.current);
+        orbitAnimFrameRef.current = null;
+      }
+      if (orbitResumeTimerRef.current != null) {
+        clearTimeout(orbitResumeTimerRef.current);
+        orbitResumeTimerRef.current = null;
+      }
+    };
+  }, []);
+
   if (nodes.length === 0) {
     return (
       <div
@@ -264,8 +371,8 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
   }
 
   return (
-    <div style={{ position: 'relative', width, height }}>
-      {/* Legend */}
+    <div style={{ position: 'relative', width, height, overflow: 'hidden' }}>
+      {/* Legend — stays fixed, not rotated */}
       <div className="absolute top-3 left-3 z-10 glass rounded-lg px-3 py-2 border border-white/10">
         <div className="text-white/40 text-[10px] font-mono mb-1 uppercase tracking-wider">Type</div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -281,26 +388,40 @@ export default function RelationshipGraph({ nodes, links, width, height, typeCol
         </div>
       </div>
 
-      <ForceGraph2D
-        ref={fgRef}
-        graphData={graphData}
-        width={width}
-        height={height}
-        backgroundColor="#0a0a0f"
-        nodeCanvasObject={paintNode}
-        nodeCanvasObjectMode={() => 'replace'}
-        nodePointerAreaPaint={nodePointerAreaPaint}
-        linkCanvasObject={paintLink}
-        linkCanvasObjectMode={() => 'replace'}
-        onNodeHover={handleNodeHover}
-        onNodeClick={handleNodeClick}
-        onBackgroundClick={handleBackgroundClick}
-        enableNodeDrag={true}
-        cooldownTicks={100}
-        d3AlphaDecay={0.02}
-        d3VelocityDecay={0.3}
-        warmupTicks={50}
-      />
+      {/* Rotating graph container */}
+      <div
+        ref={graphContainerRef}
+        style={{
+          width,
+          height,
+          transform: 'rotate(0deg)',
+          willChange: 'transform',
+        }}
+      >
+        <ForceGraph2D
+          ref={fgRef}
+          graphData={graphData}
+          width={width}
+          height={height}
+          backgroundColor="#0a0a0f"
+          nodeCanvasObject={paintNode}
+          nodeCanvasObjectMode={() => 'replace'}
+          nodePointerAreaPaint={nodePointerAreaPaint}
+          linkCanvasObject={paintLink}
+          linkCanvasObjectMode={() => 'replace'}
+          onNodeHover={handleNodeHover}
+          onNodeClick={handleNodeClick}
+          onBackgroundClick={handleBackgroundClick}
+          onZoom={handleZoom}
+          onNodeDrag={handleNodeDrag}
+          onNodeDragEnd={handleNodeDragEnd}
+          enableNodeDrag={true}
+          cooldownTicks={100}
+          d3AlphaDecay={0.02}
+          d3VelocityDecay={0.3}
+          warmupTicks={50}
+        />
+      </div>
     </div>
   );
 }

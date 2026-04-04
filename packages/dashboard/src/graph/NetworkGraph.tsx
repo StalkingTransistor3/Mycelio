@@ -130,6 +130,16 @@ export default function NetworkGraph({
   const [minimapVisible] = useState(true);
   const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const minimapFrameRef = useRef(0);
+
+  // --- Orbital rotation state ---
+  const orbitAngleRef = useRef(0);
+  const orbitAnimFrameRef = useRef<number | null>(null);
+  const orbitLastTimeRef = useRef<number>(0);
+  const orbitPausedRef = useRef(false);
+  const orbitResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Full rotation period in ms (75 seconds)
+  const ORBIT_PERIOD_MS = 75000;
+  const ORBIT_RESUME_DELAY_MS = 2500;
   
   // Refs for values used inside sigma reducers (closures won't re-capture on prop changes)
   const highlightNodeIdRef = useRef(highlightNodeId);
@@ -787,8 +797,131 @@ export default function NetworkGraph({
       graphRef.current = null;
       canvasLayerRef.current?.remove();
       minimapCanvasRef.current?.remove();
+      // Clean up orbit animation
+      if (orbitAnimFrameRef.current != null) {
+        cancelAnimationFrame(orbitAnimFrameRef.current);
+        orbitAnimFrameRef.current = null;
+      }
+      if (orbitResumeTimerRef.current != null) {
+        clearTimeout(orbitResumeTimerRef.current);
+        orbitResumeTimerRef.current = null;
+      }
     };
   }, []);
+
+  // --- Orbital rotation effect ---
+  // Slowly rotates the Sigma camera angle around the graph center like a galaxy.
+  // Pauses on user interaction, resumes after ORBIT_RESUME_DELAY_MS of inactivity.
+  useEffect(() => {
+    const sigma = sigmaRef.current;
+    if (!sigma) return;
+
+    // Pause orbit on any user interaction
+    const pauseOrbit = () => {
+      orbitPausedRef.current = true;
+      // Clear any pending resume timer
+      if (orbitResumeTimerRef.current != null) {
+        clearTimeout(orbitResumeTimerRef.current);
+        orbitResumeTimerRef.current = null;
+      }
+    };
+
+    // Schedule orbit resume after delay
+    const scheduleResume = () => {
+      if (orbitResumeTimerRef.current != null) {
+        clearTimeout(orbitResumeTimerRef.current);
+      }
+      orbitResumeTimerRef.current = setTimeout(() => {
+        orbitPausedRef.current = false;
+        orbitLastTimeRef.current = 0; // reset so we don't get a jump
+        orbitResumeTimerRef.current = null;
+      }, ORBIT_RESUME_DELAY_MS);
+    };
+
+    // Interaction handlers that pause orbit (accept any args for sigma event compatibility)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onInteractionStart = (..._args: any[]) => { pauseOrbit(); };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onInteractionEnd = (..._args: any[]) => { scheduleResume(); };
+
+    // Listen to sigma camera events for zoom/pan
+    const camera = sigma.getCamera();
+    const mouseCaptor = sigma.getMouseCaptor();
+    const touchCaptor = sigma.getTouchCaptor();
+
+    // Named handlers for clean removal (accept any args for sigma event compatibility)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onWheel = (..._args: any[]) => { pauseOrbit(); scheduleResume(); };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onLeaveNode = (..._args: any[]) => { scheduleResume(); };
+
+    // Sigma mouse captor events for detecting user interaction
+    mouseCaptor.on('mousedown', onInteractionStart);
+    mouseCaptor.on('mouseup', onInteractionEnd);
+    mouseCaptor.on('wheel', onWheel);
+    touchCaptor.on('touchdown', onInteractionStart);
+    touchCaptor.on('touchup', onInteractionEnd);
+
+    // Also pause on node hover
+    sigma.on('enterNode', onInteractionStart);
+    sigma.on('leaveNode', onLeaveNode);
+
+    // The animation loop
+    const orbitTick = (timestamp: number) => {
+      orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
+
+      if (orbitPausedRef.current || !sigmaRef.current) return;
+
+      // Initialize timing
+      if (orbitLastTimeRef.current === 0) {
+        orbitLastTimeRef.current = timestamp;
+        return;
+      }
+
+      const dt = timestamp - orbitLastTimeRef.current;
+      orbitLastTimeRef.current = timestamp;
+
+      // Calculate angular velocity: one full rotation (2*PI) in ORBIT_PERIOD_MS
+      const angularVelocity = (2 * Math.PI) / ORBIT_PERIOD_MS;
+      orbitAngleRef.current += angularVelocity * dt;
+
+      // Wrap angle to avoid growing indefinitely
+      if (orbitAngleRef.current > 2 * Math.PI) {
+        orbitAngleRef.current -= 2 * Math.PI;
+      }
+
+      // Apply the angle to the camera without triggering user-initiated events
+      const cam = sigmaRef.current.getCamera();
+      cam.setState({ angle: orbitAngleRef.current });
+    };
+
+    // Sync initial angle from camera (in case it has an existing angle)
+    orbitAngleRef.current = camera.angle || 0;
+    orbitLastTimeRef.current = 0;
+    orbitPausedRef.current = false;
+    orbitAnimFrameRef.current = requestAnimationFrame(orbitTick);
+
+    return () => {
+      if (orbitAnimFrameRef.current != null) {
+        cancelAnimationFrame(orbitAnimFrameRef.current);
+        orbitAnimFrameRef.current = null;
+      }
+      if (orbitResumeTimerRef.current != null) {
+        clearTimeout(orbitResumeTimerRef.current);
+        orbitResumeTimerRef.current = null;
+      }
+      // Remove orbit-specific event listeners (use removeListener to preserve other handlers)
+      mouseCaptor.removeListener('mousedown', onInteractionStart);
+      mouseCaptor.removeListener('mouseup', onInteractionEnd);
+      mouseCaptor.removeListener('wheel', onWheel);
+      touchCaptor.removeListener('touchdown', onInteractionStart);
+      touchCaptor.removeListener('touchup', onInteractionEnd);
+      sigma.removeListener('enterNode', onInteractionStart);
+      sigma.removeListener('leaveNode', onLeaveNode);
+    };
+  // Re-attach when sigma instance changes (nodes/edges trigger re-init)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges, width, height]);
 
   // Update sigma settings when highlight/display props change
   useEffect(() => {
